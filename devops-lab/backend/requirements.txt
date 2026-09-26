@@ -1,0 +1,1 @@
+# Phase 2 — dépendances Python (FastAPI, SQLAlchemy, Alembic...)

@@ -1,0 +1,2 @@
+# Phase 1 — playbook principal (à implémenter)
+# Appellera les roles : common, docker, traefik
