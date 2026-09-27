@@ -8,4 +8,4 @@
   roles:
     - common
     - docker
-    # - traefik  (à ajouter à l'étape suivante)
+    - traefik

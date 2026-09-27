@@ -4,3 +4,11 @@
 # ssh-keygen -t ed25519 -f ~/.ssh/devops_lab
 
 ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOpXP3nkh+ORJYmK/2F3OfuPg6eVUaCOAVK+HFqOIDUQ mike-devops-lab"
+
+# Domaine et email Let's Encrypt — à remplacer une fois le nom de domaine acheté.
+domain: "example.com"
+acme_email: "toi@example.com"
+
+# Identifiants du dashboard Traefik — le mot de passe vient du fichier vault chiffré.
+traefik_dashboard_user: admin
+traefik_dashboard_password: "{{ vault_traefik_dashboard_password }}"

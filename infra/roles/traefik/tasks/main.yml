@@ -1,1 +1,56 @@
-# Phase 1 — role traefik : tasks à implémenter
+---
+# Rôle "traefik" : déploie Traefik comme conteneur, avec TLS automatique
+# (Let's Encrypt, challenge HTTP-01) et dashboard protégé par basic auth.
+
+- name: Create /opt/traefik directory
+  ansible.builtin.file:
+    path: /opt/traefik
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0755"
+
+- name: Create letsencrypt storage directory
+  ansible.builtin.file:
+    path: /opt/traefik/letsencrypt
+    state: directory
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0700"
+
+- name: Create empty acme.json with correct permissions
+  ansible.builtin.file:
+    path: /opt/traefik/letsencrypt/acme.json
+    state: touch
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0600"
+    modification_time: preserve
+    access_time: preserve
+
+- name: Create dedicated Docker network for Traefik and its backends
+  community.docker.docker_network:
+    name: traefik-public
+    state: present
+
+- name: Generate .htpasswd file for the Traefik dashboard
+  community.general.htpasswd:
+    path: /opt/traefik/.htpasswd
+    name: "{{ traefik_dashboard_user }}"
+    password: "{{ traefik_dashboard_password }}"
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0644"
+
+- name: Deploy Traefik docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: /opt/traefik/docker-compose.yml
+    owner: "{{ deploy_user }}"
+    group: "{{ deploy_user }}"
+    mode: "0644"
+
+- name: Start Traefik stack
+  community.docker.docker_compose_v2:
+    project_src: /opt/traefik
+    state: present
