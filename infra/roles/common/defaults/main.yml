@@ -1,1 +1,9 @@
-# Phase 1 — role common : variables par défaut
+---
+# Valeurs par défaut du rôle "common" — priorité la PLUS BASSE dans Ansible.
+# Écrasées par group_vars/all.yml si la même variable y est redéfinie.
+
+deploy_user: deploy
+ssh_port: 2222
+fail2ban_maxretry: 5
+fail2ban_bantime: 1h
+fail2ban_findtime: 10m

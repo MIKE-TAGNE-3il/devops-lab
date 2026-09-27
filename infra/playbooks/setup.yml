@@ -1,2 +1,11 @@
-# Phase 1 — playbook principal (à implémenter)
-# Appellera les roles : common, docker, traefik
+---
+# Playbook principal — configure un serveur Ubuntu 24.04 vierge.
+# Usage : ansible-playbook -i inventory/hosts.yml playbooks/setup.yml
+
+- name: Configure the VPS from scratch
+  hosts: all
+  become: true
+  roles:
+    - common
+    - docker
+    # - traefik  (à ajouter à l'étape suivante)

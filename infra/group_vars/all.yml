@@ -1,1 +1,6 @@
-# Phase 1 — variables globales Ansible (port SSH, domaine, email Let's Encrypt...)
+---
+# Variables globales pour tous les hôtes de l'inventaire.
+# Clé publique SSH autorisée pour deploy_user — générée avec :
+# ssh-keygen -t ed25519 -f ~/.ssh/devops_lab
+
+ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOpXP3nkh+ORJYmK/2F3OfuPg6eVUaCOAVK+HFqOIDUQ mike-devops-lab"

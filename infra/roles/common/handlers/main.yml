@@ -1,1 +1,10 @@
-# Phase 1 — role common : handlers à implémenter
+---
+- name: Restart sshd
+  ansible.builtin.systemd:
+    name: ssh
+    state: restarted
+
+- name: Restart fail2ban
+  ansible.builtin.systemd:
+    name: fail2ban
+    state: restarted
