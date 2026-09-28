@@ -1,1 +1,6 @@
+---
 # Phase 1 — role traefik : variables par défaut
+
+# Version de l'image Traefik : patch pinne, jamais latest.
+# v3.1 negociait l'API Docker en 1.24, refusee par Docker Engine 29 (minimum 1.40).
+traefik_version: "v3.7.13"

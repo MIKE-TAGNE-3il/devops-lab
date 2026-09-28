@@ -3,10 +3,12 @@
 
 services:
   traefik:
-    image: traefik:v3.1
+    image: "traefik:{{ traefik_version }}"
     container_name: traefik
     restart: unless-stopped
     command:
+      # Active l'API interne : requis pour que le routeur dashboard fonctionne
+      - "--api.dashboard=true"
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
       - "--providers.docker.network=traefik-public"

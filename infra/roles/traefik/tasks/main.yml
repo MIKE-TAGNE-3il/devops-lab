@@ -33,6 +33,13 @@
     name: traefik-public
     state: present
 
+# passlib est requis par le module htpasswd, qui s'execute sur l'hote distant
+- name: Install passlib, required by the htpasswd module
+  ansible.builtin.apt:
+    name: python3-passlib
+    state: present
+    update_cache: true
+
 - name: Generate .htpasswd file for the Traefik dashboard
   community.general.htpasswd:
     path: /opt/traefik/.htpasswd
