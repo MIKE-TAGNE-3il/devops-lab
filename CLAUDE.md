@@ -70,7 +70,7 @@ devops-lab/
 Le projet se réalise en 4 semaines séquentielles. Ne jamais sauter une phase.
 
 ### Phase 1 — Fondations serveur (Ansible)
-- **Statut :** EN COURS (structure du repo posée)
+- **Statut :** VALIDEE (28/09/2026) — idempotence prouvee (changed=0), TLS reporte en Phase 2
 - Playbook Ansible pour configurer le VPS from scratch
 - Roles : common (SSH hardening, fail2ban, UFW), docker, traefik
 - Tout est idempotent et utilise les modules Ansible natifs
@@ -148,9 +148,9 @@ Le projet se réalise en 4 semaines séquentielles. Ne jamais sauter une phase.
 ## Informations serveur (à remplir après location)
 
 ```
-VPS_IP=
-DOMAIN=
-SSH_PORT=
+VPS_IP=167.233.28.12
+DOMAIN=            # a definir (Phase 2)
+SSH_PORT=2222
 SSH_USER=deploy
 ```
 
