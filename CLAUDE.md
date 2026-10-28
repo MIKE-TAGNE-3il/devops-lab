@@ -36,26 +36,30 @@ devops-lab/
 │   ├── outputs.tf
 │   └── versions.tf
 ├── infra/                     # Configuration serveur Ansible
+│   ├── ansible.cfg
 │   ├── inventory/
-│   │   └── hosts.yml
+│   │   ├── hosts.yml
+│   │   └── group_vars/all/    # all.yml (variables) + vault.yml (secrets chiffrés)
 │   ├── playbooks/
 │   │   └── setup.yml
-│   ├── roles/
-│   │   ├── common/            # Users, SSH, fail2ban, UFW
-│   │   ├── docker/            # Docker CE + Compose
-│   │   └── traefik/           # Reverse proxy + TLS
-│   └── group_vars/
-│       └── all.yml
+│   └── roles/
+│       ├── common/            # Users, SSH, fail2ban, UFW
+│       ├── docker/            # Docker CE + Compose
+│       └── traefik/           # Reverse proxy + TLS (acme_staging bascule test/production)
 ├── backend/                   # API FastAPI
-│   ├── app/
+│   ├── app/                   # config, db, models, schemas, routers/
+│   ├── migrations/            # Migrations Alembic (alembic.ini à la racine de backend/)
 │   ├── tests/
 │   ├── Dockerfile
-│   └── requirements.txt
-├── frontend/                  # App React (Vite)
+│   ├── requirements.txt       # Production (versions épinglées)
+│   └── requirements-dev.txt   # pytest, httpx, ruff
+├── frontend/                  # App React 18 (Vite)
 │   ├── src/
-│   ├── Dockerfile
-│   └── package.json
-├── docker-compose.yml         # Orchestration locale et production
+│   ├── Dockerfile             # Build Node puis Nginx non-root
+│   ├── nginx.conf
+│   └── package.json           # + package-lock.json
+├── docker-compose.yml         # PRODUCTION : sans ports, derrière Traefik (traefik-public)
+├── docker-compose.dev.yml     # Ajoute les ports pour le PC (make dev)
 ├── .env.example               # Variables d'environnement (template)
 ├── Makefile                   # Commandes utilitaires
 └── .github/
@@ -77,10 +81,11 @@ Le projet se réalise en 4 semaines séquentielles. Ne jamais sauter une phase.
 - **Critère de validation :** `ansible-playbook setup.yml` configure un serveur vierge en < 5 min
 
 ### Phase 2 — Conteneurisation (Docker)
-- **Statut :** À FAIRE
-- App FastAPI + React + PostgreSQL conteneurisée
+- **Statut :** VALIDEE (28/10/2026) — app accessible sur https://app.167-233-28-12.sslip.io (certificat Let's Encrypt de production), seuls les ports 80/443 ouverts
+- App FastAPI + React + PostgreSQL conteneurisée (CRUD /api/items, migrations Alembic via un service `migrate` à usage unique)
 - Dockerfiles multi-stage (images légères, user non-root)
-- docker-compose.yml avec healthchecks, réseaux séparés, labels Traefik
+- docker-compose.yml avec healthchecks, réseaux séparés (réseau `internal` pour la base), labels Traefik
+- Images construites sur le serveur : le déploiement par images GHCR arrive en Phase 3
 - **Critère de validation :** `docker compose up -d` lance tout, l'app est accessible en HTTPS
 
 ### Phase 3 — Pipeline CI/CD (GitHub Actions)
@@ -112,7 +117,8 @@ Le projet se réalise en 4 semaines séquentielles. Ne jamais sauter une phase.
 - Variables dans group_vars, jamais en dur dans les tasks
 
 ### Docker
-- Images de base : versions spécifiques (python:3.12-slim, node:20-alpine, nginx:alpine) — JAMAIS `latest`
+- Images de base : versions spécifiques (python:3.12-slim, node:24-alpine, nginxinc/nginx-unprivileged:1.30-alpine) — JAMAIS `latest`. Node 20 est en fin de vie depuis le 30/04/2026 ; nginx-unprivileged (port 8080) permet un Nginx non-root.
+- Après une modification du code ou d'un Dockerfile : `docker compose up -d --build` (sans `--build`, compose réutilise l'image existante)
 - Multi-stage builds obligatoires
 - User non-root dans les images de production
 - Healthchecks dans chaque Dockerfile et dans docker-compose.yml
@@ -149,7 +155,7 @@ Le projet se réalise en 4 semaines séquentielles. Ne jamais sauter une phase.
 
 ```
 VPS_IP=167.233.28.12
-DOMAIN=            # a definir (Phase 2)
+DOMAIN=167-233-28-12.sslip.io   # app.<DOMAIN> (application), traefik.<DOMAIN> (dashboard) ; limites Let's Encrypt partagées, repli = DuckDNS
 SSH_PORT=2222
 SSH_USER=deploy
 ```

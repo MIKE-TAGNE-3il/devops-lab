@@ -14,6 +14,11 @@ domain: "167-233-28-12.sslip.io"
 # Email du compte Let's Encrypt : dans le vault chiffré, pas dans ce dépôt public.
 acme_email: "{{ vault_acme_email }}"
 
+# false = serveur de PRODUCTION de Let's Encrypt : certificats reconnus par les navigateurs.
+# Les essais avec le serveur de test (acme_staging: true) ont validé la chaîne complète.
+# Si l'émission échoue (limites partagées de sslip.io), remettre true et passer à DuckDNS.
+acme_staging: false
+
 # Identifiants du dashboard Traefik — le mot de passe vient du fichier vault chiffré.
 traefik_dashboard_user: admin
 traefik_dashboard_password: "{{ vault_traefik_dashboard_password }}"
