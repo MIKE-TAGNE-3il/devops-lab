@@ -1,0 +1,20 @@
+# Secrets : ne doivent JAMAIS entrer dans une image
+.env
+.env.*
+
+# Environnements et caches Python locaux
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Inutiles en production (les tests tournent dans la CI, pas dans l'image)
+tests/
+pytest.ini
+requirements-dev.txt
+
+# Fichiers Docker eux-mêmes
+Dockerfile
+.dockerignore
