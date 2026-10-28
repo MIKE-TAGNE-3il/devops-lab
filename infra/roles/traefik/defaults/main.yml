@@ -4,3 +4,9 @@
 # Version de l'image Traefik : patch pinne, jamais latest.
 # v3.1 negociait l'API Docker en 1.24, refusee par Docker Engine 29 (minimum 1.40).
 traefik_version: "v3.7.13"
+
+# true : utilise le serveur de TEST de Let's Encrypt. Les certificats émis ne sont pas
+# reconnus par les navigateurs (avertissement attendu), mais les limites sont très larges :
+# on peut se tromper sans risque. À passer à false une fois que tout fonctionne.
+# Au changement : vider /opt/traefik/letsencrypt/acme.json (il garde les certificats de test).
+acme_staging: true

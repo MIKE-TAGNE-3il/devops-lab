@@ -20,6 +20,10 @@ services:
       - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
       - "--certificatesresolvers.le.acme.email={{ acme_email }}"
       - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+{% if acme_staging %}
+      # Serveur de test de Let's Encrypt : certificats non reconnus, mais limites très larges
+      - "--certificatesresolvers.le.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+{% endif %}
     ports:
       - "80:80"
       - "443:443"

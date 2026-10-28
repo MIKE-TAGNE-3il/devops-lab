@@ -5,9 +5,14 @@
 
 ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOpXP3nkh+ORJYmK/2F3OfuPg6eVUaCOAVK+HFqOIDUQ mike-devops-lab"
 
-# Domaine et email Let's Encrypt — à remplacer une fois le nom de domaine acheté.
-domain: "example.com"
-acme_email: "toi@example.com"
+# Domaine : sslip.io résout "<nom>.167-233-28-12.sslip.io" vers l'IP 167.233.28.12 sans
+# inscription. Ses limites Let's Encrypt sont PARTAGÉES avec tous ses utilisateurs (il n'est pas
+# dans la Public Suffix List) : on teste d'abord en mode staging (voir acme_staging).
+# Pour passer à un vrai domaine plus tard, seule cette valeur change.
+domain: "167-233-28-12.sslip.io"
+
+# Email du compte Let's Encrypt : dans le vault chiffré, pas dans ce dépôt public.
+acme_email: "{{ vault_acme_email }}"
 
 # Identifiants du dashboard Traefik — le mot de passe vient du fichier vault chiffré.
 traefik_dashboard_user: admin
