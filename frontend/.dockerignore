@@ -1,0 +1,12 @@
+# Secrets : ne doivent JAMAIS entrer dans une image
+.env
+.env.*
+
+# Dépendances et résultat de build locaux : l'image les reconstruit elle-même.
+# Les node_modules installés sous Windows écraseraient ceux de l'image Linux.
+node_modules/
+dist/
+
+# Fichiers Docker eux-mêmes
+Dockerfile
+.dockerignore
