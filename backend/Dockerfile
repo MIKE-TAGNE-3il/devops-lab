@@ -37,6 +37,9 @@ WORKDIR /app
 # On ne récupère que le venv construit (sans pip ni cache de build) et le code.
 COPY --from=builder /opt/venv /opt/venv
 COPY app ./app
+# Migrations de schéma : exécutées par le service "migrate" du compose (même image).
+COPY alembic.ini ./
+COPY migrations ./migrations
 
 USER app
 

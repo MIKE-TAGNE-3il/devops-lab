@@ -1,5 +1,12 @@
 # Stack applicative du DevOps Lab.
-# Morceau 4/4 : PostgreSQL + backend, réseaux séparés, healthchecks et ordre de démarrage.
+# Services : db (PostgreSQL), migrate (migrations Alembic, usage unique), backend (API).
+# Ordre de démarrage : db healthy -> migrate terminé avec succès -> backend.
+
+# URL de la base, définie UNE fois (ancre YAML &database-url) puis réutilisée par
+# migrate et backend avec *database-url. Le mot de passe n'est écrit qu'à un seul endroit.
+# "db" est le nom du service : le DNS interne de Compose le résout vers le conteneur
+# PostgreSQL. Ne jamais mettre "localhost" : dans un conteneur, c'est le conteneur lui-même.
+x-database-url: &database-url postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
 
 services:
   db:
@@ -38,17 +45,43 @@ services:
     # Pas de "ports:" volontairement : la base n'est joignable que par les autres
     # conteneurs de la stack, jamais depuis l'hôte ni depuis Internet.
 
+  migrate:
+    # Même image que le backend (même Dockerfile, mêmes couches en cache), mais une autre commande.
+    build: ./backend
+    image: devops-lab-backend:dev
+
+    # Tâche ponctuelle : applique les migrations puis le conteneur s'arrête (code 0).
+    # alembic upgrade head est idempotent : relancé sur une base à jour, il ne fait rien.
+    command: ["alembic", "upgrade", "head"]
+
+    # Jamais de redémarrage automatique : une migration ne doit pas se relancer en boucle.
+    restart: "no"
+
+    environment:
+      DATABASE_URL: *database-url
+
+    # Le HEALTHCHECK du Dockerfile interroge le port 8000 : ici il n'y a pas de serveur,
+    # le conteneur serait déclaré "unhealthy" pour rien.
+    healthcheck:
+      disable: true
+
+    # Réseau interne seulement : il n'a besoin que de la base.
+    networks:
+      - internal
+
+    depends_on:
+      db:
+        condition: service_healthy
+
   backend:
     # Construit l'image depuis backend/Dockerfile (contrairement à db, image toute faite).
     build: ./backend
+    image: devops-lab-backend:dev
 
     restart: unless-stopped
 
     environment:
-      # Assemblée ici depuis le .env : le mot de passe n'est écrit qu'à un seul endroit.
-      # "db" est le nom du service : le DNS interne de Compose le résout vers le conteneur
-      # PostgreSQL. Ne jamais mettre "localhost" : dans un conteneur, c'est le conteneur lui-même.
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      DATABASE_URL: *database-url
 
     ports:
       # 127.0.0.1 : joignable uniquement depuis cette machine, pas depuis le réseau.
@@ -62,12 +95,15 @@ services:
       - internal  # pour joindre la base
       - default   # réseau exposé (sera remplacé par traefik-public à l'arrivée de Traefik)
 
-    # Ne démarre qu'une fois la base "healthy" (sinon : 503 le temps que PostgreSQL s'initialise).
+    # Ne démarre qu'une fois la base "healthy" ET les migrations terminées avec succès :
+    # l'API ne sert jamais de requêtes sur un schéma incomplet.
     # Valable au démarrage seulement : si la base tombe ensuite, c'est pool_pre_ping qui
     # rétablit la connexion, et Docker ne redémarre pas le backend pour autant.
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
     # Même commande que le HEALTHCHECK du Dockerfile : ce bloc la remplace et permet d'ajuster
     # les délais par environnement sans reconstruire l'image.
