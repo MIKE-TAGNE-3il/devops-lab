@@ -1,1 +1,46 @@
-# Phase 2 — orchestration backend/frontend/db/traefik (à implémenter)
+# Stack applicative du DevOps Lab.
+# Morceau 2/4 : PostgreSQL + backend. Réseaux séparés et healthchecks viennent ensuite.
+
+services:
+  db:
+    # Version majeure épinglée (16), jamais "latest" : une montée silencieuse vers une
+    # autre version majeure rendrait illisibles les données déjà stockées dans le volume.
+    image: postgres:16-alpine
+
+    # Redémarre après un crash ou un reboot du serveur, mais pas après un "docker compose stop".
+    restart: unless-stopped
+
+    environment:
+      # ${VAR:?message} : compose refuse de démarrer si la variable est absente du .env,
+      # au lieu de créer une base avec un mot de passe vide.
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER manquant dans .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD manquant dans .env}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB manquant dans .env}
+
+    # Volume nommé : les données survivent à la suppression du conteneur.
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+    # Pas de "ports:" volontairement : la base n'est joignable que par les autres
+    # conteneurs de la stack, jamais depuis l'hôte ni depuis Internet.
+
+  backend:
+    # Construit l'image depuis backend/Dockerfile (contrairement à db, image toute faite).
+    build: ./backend
+
+    restart: unless-stopped
+
+    environment:
+      # Assemblée ici depuis le .env : le mot de passe n'est écrit qu'à un seul endroit.
+      # "db" est le nom du service : le DNS interne de Compose le résout vers le conteneur
+      # PostgreSQL. Ne jamais mettre "localhost" : dans un conteneur, c'est le conteneur lui-même.
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+
+    ports:
+      # 127.0.0.1 : joignable uniquement depuis cette machine, pas depuis le réseau.
+      # Temporaire : à retirer quand Traefik routera /api (il atteindra le conteneur
+      # par le réseau interne, sans port publié).
+      - "127.0.0.1:8000:8000"
+
+volumes:
+  db_data:
