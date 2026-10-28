@@ -4,7 +4,7 @@
 # (Phase 2 : dev/build — Phase 3 : test/lint/deploy)
 
 dev:
-	@echo "TODO (Phase 2) : docker compose up -d"
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 test:
 	@echo "TODO (Phase 3) : pytest"
@@ -13,7 +13,7 @@ lint:
 	@echo "TODO (Phase 3) : ruff + eslint"
 
 build:
-	@echo "TODO (Phase 2) : docker build backend/frontend"
+	docker compose build
 
 deploy:
 	@echo "TODO (Phase 3) : déploiement manuel de debug"

@@ -1,0 +1,19 @@
+# Surcharge pour travailler sur le PC, sans Traefik : ajoute les ports que Traefik rend
+# inutiles en production. Compose fusionne ce fichier avec docker-compose.yml.
+#
+# Usage : make dev
+#   (équivaut à : docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build)
+#
+# Prérequis, une seule fois sur le PC (Ansible le crée sur le serveur) :
+#   docker network create traefik-public
+# Dans le .env local : DOMAIN=localhost (les labels Traefik sont simplement ignorés ici).
+
+services:
+  backend:
+    ports:
+      # 127.0.0.1 : joignable uniquement depuis cette machine, pas depuis le réseau.
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    ports:
+      - "127.0.0.1:8080:8080"

@@ -2,6 +2,10 @@
 # Services : db (PostgreSQL), migrate (migrations Alembic, usage unique), backend (API),
 # frontend (application React servie par Nginx).
 # Ordre de démarrage : db healthy -> migrate terminé avec succès -> backend healthy -> frontend.
+#
+# Ce fichier est celui de la PRODUCTION : aucun port publié, le trafic arrive par Traefik
+# (réseau externe traefik-public, créé par Ansible). Pour travailler sur le PC, ajouter les
+# ports avec docker-compose.dev.yml (voir "make dev").
 
 # URL de la base, définie UNE fois (ancre YAML &database-url) puis réutilisée par
 # migrate et backend avec *database-url. Le mot de passe n'est écrit qu'à un seul endroit.
@@ -84,17 +88,26 @@ services:
     environment:
       DATABASE_URL: *database-url
 
-    ports:
-      # 127.0.0.1 : joignable uniquement depuis cette machine, pas depuis le réseau.
-      # Temporaire : à retirer quand Traefik routera /api (il atteindra le conteneur
-      # par le réseau traefik-public, sans port publié sur l'hôte).
-      - "127.0.0.1:8000:8000"
+    # Pas de "ports:" : Traefik atteint ce conteneur par le réseau traefik-public.
 
-    # Le backend est le seul pont entre les deux zones. Dès qu'un service déclare "networks:",
-    # il ne rejoint plus "default" automatiquement : il faut donc le lister explicitement.
+    # Le backend est le seul pont entre les deux zones : "internal" pour joindre la base,
+    # "traefik-public" pour être joignable par Traefik (et par le proxy Nginx du frontend).
     networks:
-      - internal  # pour joindre la base
-      - default   # réseau exposé (sera remplacé par traefik-public à l'arrivée de Traefik)
+      - internal
+      - traefik-public
+
+    labels:
+      # Traefik est configuré avec exposedbydefault=false : sans ce label, il ignore le conteneur.
+      - "traefik.enable=true"
+      # Le backend est sur deux réseaux : on précise celui que Traefik doit utiliser.
+      - "traefik.docker.network=traefik-public"
+      # /api va au backend. La règle du frontend couvre tout le domaine, /api compris : la
+      # priorité plus haute (100) garantit que le backend l'emporte.
+      - "traefik.http.routers.app-api.rule=Host(`app.${DOMAIN:?DOMAIN manquant dans .env}`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.app-api.priority=100"
+      - "traefik.http.routers.app-api.entrypoints=websecure"
+      - "traefik.http.routers.app-api.tls.certresolver=le"
+      - "traefik.http.services.app-api.loadbalancer.server.port=8000"
 
     # Ne démarre qu'une fois la base "healthy" ET les migrations terminées avec succès :
     # l'API ne sert jamais de requêtes sur un schéma incomplet.
@@ -122,13 +135,21 @@ services:
 
     restart: unless-stopped
 
-    ports:
-      # Comme pour le backend : joignable depuis cette machine seulement, et temporaire.
-      # En production, c'est Traefik (ports 80/443) qui sert l'application.
-      - "127.0.0.1:8080:8080"
+    # Pas de "ports:" : c'est Traefik (ports 80 et 443) qui sert l'application.
 
-    # Pas de "networks:" : le frontend rejoint seulement le réseau "default", avec le backend.
-    # Il n'est donc PAS sur "internal" et ne peut pas joindre la base de données.
+    # Seulement sur traefik-public, avec le backend. Il n'est PAS sur "internal" :
+    # il ne peut pas joindre la base de données.
+    networks:
+      - traefik-public
+
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik-public"
+      # app.<domaine> sert l'application ; /api est capté avant par le routeur du backend.
+      - "traefik.http.routers.app-frontend.rule=Host(`app.${DOMAIN:?DOMAIN manquant dans .env}`)"
+      - "traefik.http.routers.app-frontend.entrypoints=websecure"
+      - "traefik.http.routers.app-frontend.tls.certresolver=le"
+      - "traefik.http.services.app-frontend.loadbalancer.server.port=8080"
 
     # Le proxy Nginx /api a besoin du backend : on attend qu'il soit prêt.
     depends_on:
@@ -151,3 +172,8 @@ networks:
   # Si la base était compromise, elle ne pourrait pas exfiltrer de données vers l'extérieur.
   internal:
     internal: true
+
+  # Réseau de Traefik, créé par Ansible sur le serveur (external : compose ne le crée pas).
+  # Sur le PC, le créer une fois avec : docker network create traefik-public
+  traefik-public:
+    external: true
