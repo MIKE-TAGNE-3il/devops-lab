@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.db import get_db
+from app.routers import items
 
 logger = logging.getLogger(__name__)
 
@@ -45,3 +46,5 @@ def health(
 
 
 app.include_router(router)
+# Le préfixe /api est ajouté ici : les routes des items sont donc servies sous /api/items.
+app.include_router(items.router, prefix="/api")
