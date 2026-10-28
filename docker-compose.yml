@@ -1,5 +1,5 @@
 # Stack applicative du DevOps Lab.
-# Morceau 2/4 : PostgreSQL + backend. Réseaux séparés et healthchecks viennent ensuite.
+# Morceau 4/4 : PostgreSQL + backend, réseaux séparés, healthchecks et ordre de démarrage.
 
 services:
   db:
@@ -21,6 +21,20 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
 
+    # Uniquement sur le réseau interne : ni Traefik ni un futur service ne peuvent la joindre.
+    networks:
+      - internal
+
+    # "Prêt" = PostgreSQL accepte les connexions. Le "$$" laisse passer un "$" que le shell
+    # DU CONTENEUR remplace par ses propres variables ; avec un seul "$", c'est compose
+    # qui substituerait, depuis le .env de l'hôte.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
     # Pas de "ports:" volontairement : la base n'est joignable que par les autres
     # conteneurs de la stack, jamais depuis l'hôte ni depuis Internet.
 
@@ -39,8 +53,36 @@ services:
     ports:
       # 127.0.0.1 : joignable uniquement depuis cette machine, pas depuis le réseau.
       # Temporaire : à retirer quand Traefik routera /api (il atteindra le conteneur
-      # par le réseau interne, sans port publié).
+      # par le réseau traefik-public, sans port publié sur l'hôte).
       - "127.0.0.1:8000:8000"
+
+    # Le backend est le seul pont entre les deux zones. Dès qu'un service déclare "networks:",
+    # il ne rejoint plus "default" automatiquement : il faut donc le lister explicitement.
+    networks:
+      - internal  # pour joindre la base
+      - default   # réseau exposé (sera remplacé par traefik-public à l'arrivée de Traefik)
+
+    # Ne démarre qu'une fois la base "healthy" (sinon : 503 le temps que PostgreSQL s'initialise).
+    # Valable au démarrage seulement : si la base tombe ensuite, c'est pool_pre_ping qui
+    # rétablit la connexion, et Docker ne redémarre pas le backend pour autant.
+    depends_on:
+      db:
+        condition: service_healthy
+
+    # Même commande que le HEALTHCHECK du Dockerfile : ce bloc la remplace et permet d'ajuster
+    # les délais par environnement sans reconstruire l'image.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   db_data:
+
+networks:
+  # internal: true = aucun accès à Internet depuis ce réseau et aucun port publiable.
+  # Si la base était compromise, elle ne pourrait pas exfiltrer de données vers l'extérieur.
+  internal:
+    internal: true
