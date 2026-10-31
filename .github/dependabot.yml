@@ -1,0 +1,72 @@
+# Dependabot : met à jour automatiquement les dépendances, par pull request validée par la CI.
+# Une exécution par semaine ; les mises à jour d'un même écosystème sont regroupées dans UNE PR
+# pour limiter le bruit. Rien n'est jamais déployé sur une PR (voir ci.yml).
+
+version: 2
+updates:
+  # Actions GitHub épinglées par SHA : Dependabot met à jour le SHA ET le commentaire de version.
+  # Le deuxième dossier contient l'action composite de déploiement (elle utilise aussi des actions).
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/deploy
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Paris
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Dépendances Python du backend (requirements.txt et requirements-dev.txt, versions épinglées).
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Paris
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Dépendances JavaScript du frontend (package.json et package-lock.json).
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Paris
+    groups:
+      javascript:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # Images de base des Dockerfiles. On GARDE les versions choisies (Python 3.12 comme la CI,
+  # Node 24, Nginx 1.30) : seuls les correctifs de ces branches sont proposés, pas un saut de
+  # version majeure ou mineure qui demanderait une décision.
+  - package-ecosystem: docker
+    directories:
+      - /backend
+      - /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Paris
+    ignore:
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+      - dependency-name: nginxinc/nginx-unprivileged
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    commit-message:
+      prefix: "chore(deps)"
