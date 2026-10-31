@@ -229,3 +229,65 @@ jobs:
     uses: ./.github/workflows/deploy.yml
     with:
       sha: ${{ github.sha }}
+
+  # Alerte Discord : si un job de cette exécution échoue sur main, un message part dans le
+  # salon (une PR en échec se voit déjà dans l'interface GitHub, inutile de la notifier).
+  # failure() est vrai dès qu'un job listé dans "needs" a échoué ; les jobs ignorés (déploiement
+  # sauté après un lint en échec) ne comptent pas comme des échecs.
+  notify-failure:
+    name: Notification Discord (échec)
+    needs: [lint-backend, lint-frontend, test, build-scan-push, deploy]
+    if: ${{ failure() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Aucun droit sur le dépôt : ce job n'appelle que Discord.
+    permissions: {}
+    env:
+      # Secret de DÉPÔT (pas de l'Environment : ce job ne déploie rien). Un webhook ne permet
+      # que de poster dans un salon. Les valeurs passent par l'environnement, jamais par "${{ }}"
+      # dans le script : le message du commit est du texte libre.
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+      NEEDS: ${{ toJSON(needs) }}
+      COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+      COMMIT_SHA: ${{ github.sha }}
+      AUTEUR: ${{ github.actor }}
+      DEPOT: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Envoyer l'alerte sur Discord
+        run: |
+          if [[ -z "$DISCORD_WEBHOOK" ]]; then
+            echo "::warning::Secret DISCORD_WEBHOOK absent : notification ignorée"
+            exit 0
+          fi
+          # Noms des jobs en échec, tirés du contexte "needs".
+          echecs=$(jq -r 'to_entries | map(select(.value.result == "failure")) | map(.key) | join(", ")' <<<"$NEEDS")
+          # Première ligne du message de commit seulement, tronquée (limites de Discord).
+          message="${COMMIT_MESSAGE%%$'\n'*}"
+          message="${message:0:200}"
+          # jq construit le JSON : guillemets et retours à la ligne sont échappés correctement.
+          payload=$(jq -n \
+            --arg echecs "${echecs:-inconnu}" \
+            --arg message "$message" \
+            --arg sha "${COMMIT_SHA:0:7}" \
+            --arg auteur "$AUTEUR" \
+            --arg depot "$DEPOT" \
+            --arg url "$RUN_URL" \
+            '{
+              username: "GitHub Actions",
+              embeds: [{
+                title: "Pipeline en échec sur main",
+                url: $url,
+                color: 15548997,
+                fields: [
+                  {name: "Jobs en échec", value: $echecs},
+                  {name: "Commit", value: ("`" + $sha + "` " + $message)},
+                  {name: "Auteur", value: $auteur, inline: true},
+                  {name: "Dépôt", value: $depot, inline: true}
+                ]
+              }]
+            }')
+          curl --fail --silent --show-error --retry 3 \
+            --header 'Content-Type: application/json' \
+            --data "$payload" "$DISCORD_WEBHOOK"
+          echo "Alerte envoyée."

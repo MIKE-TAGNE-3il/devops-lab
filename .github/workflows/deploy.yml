@@ -192,3 +192,49 @@ jobs:
             echo "- Commit : \`$SHA\`"
             echo "- Application : https://${APP_DOMAIN}"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Alerte Discord pour un déploiement LANCÉ À LA MAIN. Appelé par ci.yml, ce workflow est
+  # couvert par le job notify-failure de ci.yml (github.event_name vaut alors "push") : le
+  # filtre ci-dessous évite d'envoyer deux messages pour le même échec.
+  notify-failure:
+    name: Notification Discord (échec)
+    needs: deploy
+    if: ${{ failure() && github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    env:
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+      SHA: ${{ inputs.sha }}
+      AUTEUR: ${{ github.actor }}
+      DEPOT: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Envoyer l'alerte sur Discord
+        run: |
+          if [[ -z "$DISCORD_WEBHOOK" ]]; then
+            echo "::warning::Secret DISCORD_WEBHOOK absent : notification ignorée"
+            exit 0
+          fi
+          payload=$(jq -n \
+            --arg sha "${SHA:0:7}" \
+            --arg auteur "$AUTEUR" \
+            --arg depot "$DEPOT" \
+            --arg url "$RUN_URL" \
+            '{
+              username: "GitHub Actions",
+              embeds: [{
+                title: "Déploiement manuel en échec",
+                url: $url,
+                color: 15548997,
+                fields: [
+                  {name: "Version demandée", value: ("`" + $sha + "`")},
+                  {name: "Lancé par", value: $auteur, inline: true},
+                  {name: "Dépôt", value: $depot, inline: true}
+                ]
+              }]
+            }')
+          curl --fail --silent --show-error --retry 3 \
+            --header 'Content-Type: application/json' \
+            --data "$payload" "$DISCORD_WEBHOOK"
+          echo "Alerte envoyée."
