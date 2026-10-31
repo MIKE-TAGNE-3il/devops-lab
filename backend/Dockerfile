@@ -52,4 +52,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 # Forme "exec" : uvicorn est le processus principal (PID 1) et reçoit SIGTERM
 # directement, donc l'arrêt du conteneur est propre.
-CMD ["uvicorn", "app.main:application_inexistante", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
