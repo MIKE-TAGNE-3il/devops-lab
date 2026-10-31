@@ -62,6 +62,31 @@ jobs:
             exit 1
           fi
 
+      # Échec rapide et lisible si l'Environment est mal configuré : on nomme ce qui manque
+      # (jamais une valeur). Sans ce contrôle, une variable vide donnait une erreur SSH obscure.
+      - name: Vérifier la configuration de l'Environment
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          manquants=()
+          for nom in SSH_HOST SSH_PORT SSH_USER APP_DOMAIN SSH_PRIVATE_KEY SSH_KNOWN_HOSTS; do
+            if [[ -z "${!nom:-}" ]]; then manquants+=("$nom"); fi
+          done
+          if [[ "${#manquants[@]}" -gt 0 ]]; then
+            echo "::error title=Configuration incomplète::Absents ou vides dans l'Environment production : ${manquants[*]}"
+            exit 1
+          fi
+          if ! grep -q 'BEGIN OPENSSH PRIVATE KEY' <<<"$SSH_PRIVATE_KEY"; then
+            echo "::error title=SSH_PRIVATE_KEY::Format inattendu : la clé doit commencer par BEGIN OPENSSH PRIVATE KEY"
+            exit 1
+          fi
+          if ! grep -q 'ssh-ed25519' <<<"$SSH_KNOWN_HOSTS"; then
+            echo "::error title=SSH_KNOWN_HOSTS::Format inattendu : une ligne ssh-ed25519 est attendue"
+            exit 1
+          fi
+          echo "Configuration de l'Environment complète."
+
       # On récupère le commit déployé : son docker-compose.yml sert au contrôle de dérive.
       - name: Récupérer le code du commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -90,9 +115,20 @@ jobs:
           SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          # tr -d '\r' : un collage depuis Windows peut ajouter des retours chariot invisibles
+          # que SSH refuse ("invalid format") dans la clé et dans known_hosts.
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+          # La clé doit être lisible, et known_hosts doit contenir l'entrée "[hôte]:port".
+          if ! ssh-keygen -y -f ~/.ssh/id_deploy >/dev/null 2>&1; then
+            echo "::error title=SSH_PRIVATE_KEY::La clé privée est illisible (copie tronquée ou altérée)"
+            exit 1
+          fi
+          if ! ssh-keygen -F "[${SSH_HOST}]:${SSH_PORT}" -f ~/.ssh/known_hosts >/dev/null; then
+            echo "::error title=SSH_KNOWN_HOSTS::Aucune entrée pour [${SSH_HOST}]:${SSH_PORT} (format attendu : [ip]:port ssh-ed25519 …)"
+            exit 1
+          fi
           {
             echo "Host vps"
             echo "  HostName $SSH_HOST"
@@ -112,11 +148,18 @@ jobs:
       - name: Déployer
         id: deploy
         run: |
+          set -o pipefail
           empreinte=$(sha256sum docker-compose.yml | cut -d' ' -f1)
+          # La sortie du serveur est affichée en direct ET conservée : en cas d'échec, ses
+          # dernières lignes deviennent une annotation visible sur la page du run.
           # Les variables sont volontairement développées ICI (côté runner) : le serveur reçoit
           # la commande finale "deploy <sha> <empreinte>", qu'il revalide strictement.
           # shellcheck disable=SC2029
-          ssh vps "deploy $SHA $empreinte"
+          if ! ssh vps "deploy $SHA $empreinte" 2>&1 | tee "$RUNNER_TEMP/deploy.log"; then
+            resume=$(tail -n 6 "$RUNNER_TEMP/deploy.log" | tr '\n' ' ')
+            echo "::error title=Déploiement échoué::${resume}"
+            exit 1
+          fi
 
       # Contrôle de bout en bout, depuis Internet : DNS, TLS (certificat Let's Encrypt de
       # production), Traefik, backend et base de données. --retry laisse à Traefik le temps
