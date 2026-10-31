@@ -12,3 +12,6 @@ app_dir: /opt/devops-lab
 
 # Unique programme que la clé SSH de la CI a le droit d'exécuter (commande forcée).
 app_deploy_script: /usr/local/bin/deploy-app
+
+# docker-compose.yml de production du dépôt, copié sur le serveur (playbook_dir = infra/playbooks).
+app_compose_src: "{{ playbook_dir }}/../../docker-compose.yml"

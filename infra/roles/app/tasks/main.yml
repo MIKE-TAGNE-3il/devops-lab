@@ -42,11 +42,24 @@
     # 0750 : le futur fichier .env (mots de passe) n'est lisible par aucun autre utilisateur.
     mode: "0750"
 
+# Le compose de production est posé par Ansible, pas envoyé par la CI : une clé volée ne peut
+# donc pas faire exécuter au serveur un compose de son choix (conteneur privileged, montage
+# de /...). Le script de déploiement refuse si ce fichier diffère de celui du commit déployé
+# (contrôle de dérive) : après une modification du compose, relancer ce playbook.
+# Propriétaire root : l'utilisateur de la CI le lit mais ne peut pas le modifier.
+- name: Install the production docker-compose.yml
+  ansible.builtin.copy:
+    src: "{{ app_compose_src }}"
+    dest: "{{ app_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
 # Propriétaire root : l'utilisateur de la CI peut exécuter le script mais pas le modifier.
 # Sans cela, une clé volée pourrait réécrire le script et sortir de sa restriction.
 - name: Install the forced deploy script
-  ansible.builtin.copy:
-    src: deploy-app.sh
+  ansible.builtin.template:
+    src: deploy-app.sh.j2
     dest: "{{ app_deploy_script }}"
     owner: root
     group: root

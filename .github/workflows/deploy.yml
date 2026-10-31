@@ -1,20 +1,151 @@
-# Phase 3 — déploiement SSH sur le VPS (étape 6, pas encore implémenté).
-# Emplacement réservé mais VALIDE : un fichier sans "on:" ni "jobs:" est rejeté par GitHub,
-# qui affiche alors un run en échec à chaque push. Celui-ci ne se lance qu'à la main.
+# CD — déploiement en production sur le VPS, par SSH.
+# Deux usages :
+#   - appelé par ci.yml après la publication des images, sur chaque push vers main ;
+#   - lancé à la main (onglet Actions > Deploy > Run workflow) avec le SHA d'un commit dont
+#     les images sont déjà publiées : redéploiement, ou retour arrière manuel vers une
+#     version choisie.
+#
+# La clé SSH de ce workflow est RESTREINTE côté serveur (commande forcée, voir le rôle Ansible
+# "app") : elle ne peut lancer que /usr/local/bin/deploy-app, c'est-à-dire déployer une image
+# déjà publiée ou revenir à la version précédente. Le docker-compose.yml du serveur est posé
+# par Ansible ; ce workflow n'en envoie que l'empreinte (sha256) pour détecter une dérive.
+#
+# Les secrets (clé SSH, empreinte du serveur) et les variables (hôte, port, utilisateur,
+# domaine) viennent de l'Environment GitHub "production", limité à la branche main.
 
 name: Deploy
 
 on:
+  workflow_call:
+    inputs:
+      sha:
+        description: SHA complet du commit à déployer
+        type: string
+        required: true
   workflow_dispatch:
+    inputs:
+      sha:
+        description: SHA complet (40 caractères) du commit à déployer (images déjà publiées sur GHCR)
+        type: string
+        required: true
 
 permissions:
   contents: read
 
+# Un seul déploiement à la fois, et on n'interrompt jamais celui qui est en cours : couper
+# un déploiement au milieu laisserait le serveur dans un état incertain.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
-  placeholder:
-    name: Emplacement réservé
+  deploy:
+    name: Déployer sur le VPS
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://${{ vars.APP_DOMAIN }}
+    env:
+      SHA: ${{ inputs.sha }}
+      SSH_HOST: ${{ vars.SSH_HOST }}
+      SSH_PORT: ${{ vars.SSH_PORT }}
+      SSH_USER: ${{ vars.SSH_USER }}
+      APP_DOMAIN: ${{ vars.APP_DOMAIN }}
     steps:
-      - name: Rappel
-        run: echo "Déploiement non implémenté (étape 6 de la phase 3)"
+      # Les valeurs passent par des variables d'environnement (jamais "${{ }}" dans un script) :
+      # un contenu inattendu ne peut pas être interprété comme du code shell.
+      - name: Vérifier le format du SHA
+        run: |
+          if [[ ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::SHA invalide : 40 caractères hexadécimaux attendus"
+            exit 1
+          fi
+
+      # On récupère le commit déployé : son docker-compose.yml sert au contrôle de dérive.
+      - name: Récupérer le code du commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+
+      # Échec rapide : si la CI n'a pas publié les images de ce commit (mauvais SHA, build
+      # échoué), on s'arrête avant de toucher au serveur. Les paquets sont publics.
+      - name: Vérifier que les images existent sur GHCR
+        run: |
+          for service in backend frontend; do
+            image="ghcr.io/mike-tagne-3il/devops-lab-${service}:${SHA}"
+            if ! docker manifest inspect "$image" >/dev/null; then
+              echo "::error::Image introuvable : $image"
+              exit 1
+            fi
+            echo "Image trouvée : $image"
+          done
+
+      # Mode strict : la connexion échoue si l'empreinte du serveur ne correspond pas à celle
+      # enregistrée dans le secret (protection contre l'usurpation du serveur).
+      - name: Préparer la connexion SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          {
+            echo "Host vps"
+            echo "  HostName $SSH_HOST"
+            echo "  Port $SSH_PORT"
+            echo "  User $SSH_USER"
+            echo "  IdentityFile ~/.ssh/id_deploy"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking yes"
+            echo "  UserKnownHostsFile ~/.ssh/known_hosts"
+            echo "  BatchMode yes"
+            echo "  ConnectTimeout 15"
+            echo "  ServerAliveInterval 15"
+          } > ~/.ssh/config
+
+      # Le serveur télécharge les images, démarre la pile, attend les healthchecks et, si
+      # quelque chose échoue, revient tout seul à la version précédente (code retour non nul).
+      - name: Déployer
+        id: deploy
+        run: |
+          empreinte=$(sha256sum docker-compose.yml | cut -d' ' -f1)
+          # Les variables sont volontairement développées ICI (côté runner) : le serveur reçoit
+          # la commande finale "deploy <sha> <empreinte>", qu'il revalide strictement.
+          # shellcheck disable=SC2029
+          ssh vps "deploy $SHA $empreinte"
+
+      # Contrôle de bout en bout, depuis Internet : DNS, TLS (certificat Let's Encrypt de
+      # production), Traefik, backend et base de données. --retry laisse à Traefik le temps
+      # de découvrir les nouveaux conteneurs.
+      - name: Vérifier l'application depuis Internet
+        id: sante
+        run: |
+          reponse=$(curl --fail --silent --show-error --max-time 10 \
+            --retry 10 --retry-delay 3 --retry-all-errors \
+            "https://${APP_DOMAIN}/api/health")
+          echo "API : $reponse"
+          grep -q '"database":"ok"' <<<"$reponse"
+          curl --fail --silent --show-error --max-time 10 --output /dev/null \
+            --retry 5 --retry-delay 3 --retry-all-errors "https://${APP_DOMAIN}/"
+          echo "Page d'accueil : OK"
+
+      # Le serveur a jugé la pile saine mais l'application ne répond pas correctement de
+      # l'extérieur : on revient à la version précédente.
+      - name: Retour arrière (application inaccessible)
+        if: failure() && steps.sante.outcome == 'failure'
+        run: |
+          echo "::warning::L'application ne répond pas : retour arrière vers la version précédente"
+          ssh vps rollback
+
+      - name: Résumé
+        if: success()
+        run: |
+          {
+            echo "### Déploiement réussi"
+            echo "- Commit : \`$SHA\`"
+            echo "- Application : https://${APP_DOMAIN}"
+          } >> "$GITHUB_STEP_SUMMARY"

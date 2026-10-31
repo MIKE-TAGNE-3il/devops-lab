@@ -11,6 +11,11 @@
 # publie sur GHCR, taguées par le SHA du commit. Le serveur ne fait que les télécharger.
 # Variable obligatoire : IMAGE_TAG (SHA du commit à déployer, fourni par le déploiement).
 
+# Nom du projet Compose, FIXÉ ici : sans cette ligne, Compose le déduit du nom du dossier. Le
+# volume de la base (devops-lab_db_data) et les réseaux portent ce nom : un dossier renommé
+# ou déplacé créerait une seconde pile avec une base vide au lieu de reprendre l'existante.
+name: devops-lab
+
 # URL de la base, définie UNE fois (ancre YAML &database-url) puis réutilisée par
 # migrate et backend avec *database-url. Le mot de passe n'est écrit qu'à un seul endroit.
 # "db" est le nom du service : le DNS interne de Compose le résout vers le conteneur

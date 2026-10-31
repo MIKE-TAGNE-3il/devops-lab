@@ -1,0 +1,166 @@
+#!/bin/bash
+# Commande forcée de la clé SSH de GitHub Actions (voir le rôle Ansible "app").
+# sshd lance CE script quoi que le client demande ; la demande réelle est dans
+# SSH_ORIGINAL_COMMAND. Tout ce qui n'est pas explicitement prévu ci-dessous est refusé.
+#
+# Commandes acceptées :
+#   ping                              test de connexion
+#   status                            versions déployées et état des conteneurs
+#   deploy <sha> <empreinte-compose>  déploie l'image <sha> (retour arrière auto si échec)
+#   rollback                          revient à la version précédente
+#
+# Installé par Ansible (template), propriétaire root : ne pas le modifier à la main.
+set -euo pipefail
+
+# Dossier de l'application : valeur de la variable Ansible app_dir.
+APP_DIR="{{ app_dir }}"
+
+{% raw %}
+# Tout ce qui suit est du shell, pas du Jinja : ce bloc "raw" empêche Ansible d'interpréter des
+# séquences shell comme la longueur d'un tableau (${#args[@]}) : "{#" ouvre sinon un commentaire
+# Jinja et fait échouer le rendu.
+COMPOSE_FILE="$APP_DIR/docker-compose.yml"
+# Fichiers d'état : tag (SHA du commit) de la version en cours et de la précédente.
+CURRENT="$APP_DIR/.current_tag"
+PREVIOUS="$APP_DIR/.previous_tag"
+
+# Trace chaque appel dans le journal du système (journalctl -t deploy-app) : on peut
+# retrouver qui a demandé quoi, et quand.
+journal() { logger -t deploy-app -- "$*"; }
+
+# Affiche l'erreur (le client SSH la reçoit : elle apparaît dans le journal GitHub Actions),
+# la trace dans le journal du système, puis quitte en échec.
+die() {
+  echo "ERREUR : $*" >&2
+  journal "erreur : $*"
+  exit 1
+}
+
+# Les arguments viennent du client : on n'accepte que des formats stricts (jamais "eval").
+est_sha() { [[ "$1" =~ ^[0-9a-f]{40}$ ]]; }
+est_empreinte() { [[ "$1" =~ ^[0-9a-f]{64}$ ]]; }
+
+# Contenu d'un fichier d'état, ou rien s'il n'existe pas encore.
+lire() {
+  if [[ -f "$1" ]]; then cat "$1"; fi
+}
+
+# docker compose pour la version <tag> : IMAGE_TAG choisit les images (voir docker-compose.yml).
+compose() {
+  local tag=$1
+  shift
+  IMAGE_TAG="$tag" docker compose --project-directory "$APP_DIR" -f "$COMPOSE_FILE" "$@"
+}
+
+# Télécharge les images de <tag> puis démarre la pile. --wait attend que les healthchecks
+# passent (et que "migrate" se termine avec succès) : sans lui, "up" rendrait la main alors
+# que l'application n'est pas encore prête. Sort en erreur si un service n'est pas sain.
+lancer() {
+  local tag=$1
+  compose "$tag" pull --quiet || return 1
+  compose "$tag" up --detach --wait --wait-timeout 180 --remove-orphans || return 1
+}
+
+# Un seul déploiement à la fois. Le descripteur 9 garde le verrou jusqu'à la fin du script.
+verrouiller() {
+  exec 9>"$APP_DIR/.deploy.lock"
+  flock -n 9 || die "un déploiement est déjà en cours"
+}
+
+cmd_ping() {
+  journal "ping"
+  echo "pong : utilisateur=$(id -un) hote=$(hostname) architecture=$(uname -m)"
+  docker --version
+  docker compose version
+}
+
+cmd_status() {
+  local courant
+  courant=$(lire "$CURRENT")
+  echo "version courante   : ${courant:-aucune}"
+  echo "version précédente : $(lire "$PREVIOUS")"
+  compose "${courant:-aucune}" ps
+}
+
+cmd_deploy() {
+  local sha=$1 empreinte=$2 courant empreinte_serveur
+  est_sha "$sha" || die "SHA invalide (40 caractères hexadécimaux attendus)"
+  est_empreinte "$empreinte" || die "empreinte du compose invalide (sha256 attendu)"
+  [[ -f "$APP_DIR/.env" ]] || die "$APP_DIR/.env absent : créer le fichier avant le premier déploiement"
+
+  # Contrôle de dérive : le compose que le serveur exécute (posé par Ansible) doit être celui
+  # du commit déployé. Sinon la nouvelle image tournerait avec une configuration périmée.
+  empreinte_serveur=$(sha256sum "$COMPOSE_FILE" | cut -d' ' -f1)
+  [[ "$empreinte_serveur" == "$empreinte" ]] \
+    || die "docker-compose.yml du serveur différent de celui du commit : relancer Ansible (setup.yml)"
+
+  verrouiller
+  courant=$(lire "$CURRENT")
+  journal "déploiement de $sha (version courante : ${courant:-aucune})"
+
+  if lancer "$sha"; then
+    # La version qui tournait devient la version de repli (sauf redéploiement à l'identique).
+    if [[ -n "$courant" && "$courant" != "$sha" ]]; then
+      echo "$courant" >"$PREVIOUS"
+    fi
+    echo "$sha" >"$CURRENT"
+    # Les images de plus de 72 h qui ne servent plus sont supprimées (disque du serveur).
+    docker image prune --all --force --filter "until=72h" >/dev/null || true
+    journal "déploiement réussi : $sha"
+    echo "Déployé : $sha"
+    return 0
+  fi
+
+  echo "ÉCHEC du déploiement de $sha" >&2
+  journal "échec du déploiement de $sha"
+  if [[ -z "$courant" ]]; then
+    die "aucune version précédente vers laquelle revenir (premier déploiement)"
+  fi
+  # Retour arrière : on relance la version qui tournait avant. Attention, il ne défait pas
+  # les migrations de base de données déjà appliquées (elles doivent rester compatibles).
+  echo "Retour arrière vers $courant" >&2
+  if lancer "$courant"; then
+    journal "retour arrière réussi : $courant"
+    die "déploiement échoué ; retour arrière effectué vers $courant"
+  fi
+  die "déploiement ET retour arrière échoués : intervention manuelle nécessaire"
+}
+
+cmd_rollback() {
+  local courant precedent
+  verrouiller
+  courant=$(lire "$CURRENT")
+  precedent=$(lire "$PREVIOUS")
+  [[ -n "$precedent" ]] || die "aucune version précédente enregistrée"
+  journal "retour arrière demandé : $courant -> $precedent"
+  lancer "$precedent" || die "le retour arrière vers $precedent a échoué"
+  # On échange : un second "rollback" annulerait celui-ci.
+  echo "$precedent" >"$CURRENT"
+  echo "$courant" >"$PREVIOUS"
+  echo "Retour arrière effectué : $precedent"
+}
+
+# Découpe la demande du client en mots. Rien n'est évalué : les mots restent du texte et
+# sont validés (regex) avant le moindre usage.
+read -r -a args <<<"${SSH_ORIGINAL_COMMAND:-}"
+sous_commande="${args[0]:-}"
+
+case "$sous_commande" in
+  ping) cmd_ping ;;
+  status) cmd_status ;;
+  deploy)
+    [[ "${#args[@]}" -eq 3 ]] || die "usage : deploy <sha> <empreinte-compose>"
+    cmd_deploy "${args[1]}" "${args[2]}"
+    ;;
+  rollback)
+    [[ "${#args[@]}" -eq 1 ]] || die "usage : rollback"
+    cmd_rollback
+    ;;
+  *)
+    # Connexion interactive (commande vide) ou commande inconnue : refus.
+    journal "refusé : '${SSH_ORIGINAL_COMMAND:-}'"
+    echo "Commande refusée." >&2
+    exit 1
+    ;;
+esac
+{% endraw %}

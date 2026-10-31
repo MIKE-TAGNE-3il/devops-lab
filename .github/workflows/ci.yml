@@ -5,6 +5,7 @@
 # une erreur de style coûte 30 secondes et non un build complet.
 # Les images ne sont publiées que sur un push vers main ; sur une PR on construit et on scanne
 # (pour valider les Dockerfiles et la sécurité avant la fusion) sans rien publier.
+# Sur main, un dernier job appelle deploy.yml pour mettre les images en production.
 #
 # Les actions sont épinglées par SHA de commit (le tag en commentaire est celui du SHA) :
 # un tag peut être déplacé par son auteur, pas un SHA. Dependabot pourra les mettre à jour.
@@ -216,3 +217,15 @@ jobs:
         run: |
           docker push "$IMAGE:$GITHUB_SHA"
           echo "Image publiée : \`$IMAGE:$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # Déploiement en production : uniquement après la publication des DEUX images (needs sur
+  # toute la matrice) et uniquement sur un push vers main. Le détail est dans deploy.yml.
+  deploy:
+    name: Déploiement en production
+    needs: build-scan-push
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/deploy.yml
+    with:
+      sha: ${{ github.sha }}

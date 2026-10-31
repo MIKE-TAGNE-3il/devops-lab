@@ -2,3 +2,7 @@
 # Windows : un retour chariot (\r) dans la ligne "#!/bin/bash" les empêche de s'exécuter sur
 # le serveur ("bad interpreter").
 *.sh text eol=lf
+
+# Les compose sont comparés par empreinte (sha256) entre le dépôt, la CI et le serveur :
+# leurs octets doivent être identiques partout, quel que soit le réglage autocrlf du poste.
+docker-compose*.yml text eol=lf
