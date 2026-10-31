@@ -9,3 +9,4 @@
     - common
     - docker
     - traefik
+    - app

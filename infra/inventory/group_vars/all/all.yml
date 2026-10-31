@@ -5,6 +5,13 @@
 
 ssh_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOpXP3nkh+ORJYmK/2F3OfuPg6eVUaCOAVK+HFqOIDUQ mike-devops-lab"
 
+# Clé publique de la CI (GitHub Actions), autorisée pour l'utilisateur "cd" avec une commande
+# forcée : elle ne peut lancer que /usr/local/bin/deploy-app (rôle "app"). Une clé publique
+# n'est pas un secret. La clé PRIVÉE correspondante ne vit que dans GitHub Secrets
+# (SSH_PRIVATE_KEY). Générée avec :
+# ssh-keygen -t ed25519 -f ~/.ssh/devops_lab_ci -N "" -C "github-actions-deploy"
+ci_deploy_public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH650cjs+yvR6XzjTqvTf4YwXf+Z105zfEE1tkMFnhcC github-actions-deploy"
+
 # Domaine : sslip.io résout "<nom>.167-233-28-12.sslip.io" vers l'IP 167.233.28.12 sans
 # inscription. Ses limites Let's Encrypt sont PARTAGÉES avec tous ses utilisateurs (il n'est pas
 # dans la Public Suffix List) : on teste d'abord en mode staging (voir acme_staging).

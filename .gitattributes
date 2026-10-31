@@ -1,0 +1,4 @@
+# Les scripts shell doivent TOUJOURS avoir des fins de ligne Unix (LF), même extraits sous
+# Windows : un retour chariot (\r) dans la ligne "#!/bin/bash" les empêche de s'exécuter sur
+# le serveur ("bad interpreter").
+*.sh text eol=lf

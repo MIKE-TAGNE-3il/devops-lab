@@ -1,0 +1,14 @@
+---
+# Rôle "app" : prépare le serveur à recevoir les déploiements de la CI (GitHub Actions).
+# La clé publique de la CI (ci_deploy_public_key) est définie dans group_vars/all/all.yml.
+
+# Utilisateur dédié à la CI. Il n'a PAS de sudo (contrairement à deploy_user) : si le secret
+# SSH de GitHub fuitait, l'attaquant n'aurait pas un accès administrateur au serveur.
+app_ci_user: cd
+
+# Dossier de l'application sur le serveur (comme /opt/traefik pour Traefik) : il reçoit
+# le docker-compose.yml envoyé par la CI et le fichier .env (secrets de l'application).
+app_dir: /opt/devops-lab
+
+# Unique programme que la clé SSH de la CI a le droit d'exécuter (commande forcée).
+app_deploy_script: /usr/local/bin/deploy-app
