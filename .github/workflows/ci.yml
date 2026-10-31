@@ -1,8 +1,10 @@
 # CI — intégration continue.
 # Se déclenche sur chaque pull request et sur chaque push vers main.
-# Ordre "fail fast" : lint (backend et frontend en parallèle) -> tests -> (étape suivante :
-# build des images, scan Trivy, publication sur GHCR). Un job ne démarre que si les précédents
-# sont verts, donc une erreur de style coûte 30 secondes et non un build complet.
+# Ordre "fail fast" : lint (backend et frontend en parallèle) -> tests -> build des images,
+# scan Trivy, publication sur GHCR. Un job ne démarre que si les précédents sont verts, donc
+# une erreur de style coûte 30 secondes et non un build complet.
+# Les images ne sont publiées que sur un push vers main ; sur une PR on construit et on scanne
+# (pour valider les Dockerfiles et la sécurité avant la fusion) sans rien publier.
 #
 # Les actions sont épinglées par SHA de commit (le tag en commentaire est celui du SHA) :
 # un tag peut être déplacé par son auteur, pas un SHA. Dependabot pourra les mettre à jour.
@@ -114,3 +116,103 @@ jobs:
       - name: Pytest
         working-directory: backend
         run: pytest
+
+  build-scan-push:
+    name: Image ${{ matrix.service }} (build, scan, push)
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Droits propres à ce job (ils remplacent ceux du niveau workflow, d'où contents: read).
+    permissions:
+      contents: read
+      packages: write # publier sur GHCR
+      security-events: write # envoyer le rapport Trivy à l'onglet Security
+    strategy:
+      # Un échec sur le backend ne doit pas masquer l'état du frontend : on veut voir les deux.
+      fail-fast: false
+      matrix:
+        service: [backend, frontend]
+    env:
+      # Nom en minuscules : GHCR refuse les majuscules (le compte est MIKE-TAGNE-3il).
+      IMAGE: ghcr.io/mike-tagne-3il/devops-lab-${{ matrix.service }}
+      # Publication uniquement sur un push vers main (jamais sur une PR, fork compris).
+      PUBLIER: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Préparer Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Construit l'image SANS la publier (push: false) : elle est chargée dans le Docker du
+      # runner (load: true) pour être scannée avant toute publication.
+      - name: Construire l'image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./${{ matrix.service }}
+          # Le serveur Hetzner est en x86_64 : même architecture que le runner, pas d'émulation.
+          platforms: linux/amd64
+          load: true
+          push: false
+          # Le SHA du commit identifie l'image (jamais "latest") : il permet le rollback.
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          # Cache des couches Docker dans GitHub Actions, séparé par service.
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          # Rattache l'image au dépôt dans GHCR (visible sur la page du paquet).
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          # Pas d'attestation : elle transformerait l'image en index multi-manifestes.
+          provenance: false
+
+      # Rapport complet au format SARIF pour l'onglet Security (exit-code 0 : ce passage
+      # ne bloque pas, le portail est l'étape suivante). Uniquement sur main.
+      - name: Trivy — rapport pour l'onglet Security
+        if: env.PUBLIER == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          # Même version de Trivy que celle testée en local.
+          version: v0.76.1
+          image-ref: ${{ env.IMAGE }}:${{ github.sha }}
+          format: sarif
+          output: trivy-${{ matrix.service }}.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+          exit-code: "0"
+
+      - name: Envoyer le rapport à l'onglet Security
+        if: env.PUBLIER == 'true'
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category: trivy-${{ matrix.service }}
+
+      # LE PORTAIL : échoue (exit-code 1) sur toute faille HIGH ou CRITICAL pour laquelle un
+      # correctif existe. ignore-unfixed évite de bloquer sur ce qu'on ne peut pas corriger.
+      - name: Trivy — portail de sécurité
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          image-ref: ${{ env.IMAGE }}:${{ github.sha }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Se connecter à GHCR
+        if: env.PUBLIER == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Jeton automatique du workflow : aucun secret à créer (droit packages: write ci-dessus).
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # docker push (et non une nouvelle construction) : on publie EXACTEMENT l'image scannée.
+      - name: Publier l'image sur GHCR
+        if: env.PUBLIER == 'true'
+        run: |
+          docker push "$IMAGE:$GITHUB_SHA"
+          echo "Image publiée : \`$IMAGE:$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"

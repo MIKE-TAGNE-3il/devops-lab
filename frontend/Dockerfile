@@ -26,6 +26,15 @@ RUN npm run build
 # 1.30 = branche stable de Nginx (les versions paires sont les stables).
 FROM nginxinc/nginx-unprivileged:1.30-alpine AS runtime
 
+# Applique les correctifs de sécurité Alpine publiés depuis la construction de l'image de base
+# (le scan Trivy de la CI échoue sur toute faille HIGH/CRITICAL qui a un correctif). Il faut
+# être root pour installer des paquets : on y passe le temps de la mise à jour, puis on revient
+# à l'utilisateur 101 (nginx) de l'image de base, donc l'image finale reste NON-ROOT.
+# --no-cache : l'index des paquets n'est pas conservé dans l'image.
+USER root
+RUN apk upgrade --no-cache
+USER 101
+
 # Notre configuration remplace celle par défaut.
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
