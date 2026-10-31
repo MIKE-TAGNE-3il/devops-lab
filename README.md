@@ -13,7 +13,7 @@ justifié (voir [Choix techniques](#choix-techniques)).
 |---|---|---|
 | 1. Fondations serveur | Ansible : durcissement SSH, fail2ban, UFW, Docker, Traefik | ✅ validée, idempotence prouvée (`changed=0`) |
 | 2. Conteneurisation | Docker : API, frontend, base, réseaux isolés, HTTPS | ✅ validée |
-| 3. Pipeline CI/CD | GitHub Actions : lint, tests, build, scan Trivy, GHCR, déploiement SSH avec retour arrière | ✅ validée (31/10/2026), voir [Preuves](#preuves-de-la-phase-3) |
+| 3. Pipeline CI/CD | GitHub Actions : lint, tests, build, scan Trivy, GHCR, déploiement SSH avec retour arrière | ✅ validée |
 | 4. Infrastructure as Code | Terraform : provisioning du VPS, state distant | ⏳ à venir |
 
 Le détail de chaque phase et ses critères de validation sont dans [`CLAUDE.md`](CLAUDE.md).
