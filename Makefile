@@ -1,16 +1,35 @@
 .PHONY: dev test lint build deploy
 
-# Commandes disponibles au fur et à mesure de l'avancement du projet
-# (Phase 2 : dev/build — Phase 3 : test/lint/deploy)
+# Commandes à lancer depuis WSL/Linux ("make" n'existe pas sous Windows).
+# Prérequis : Python avec le module venv (apt install python3-venv) et, pour le lint
+# frontend, Node avec "cd frontend && npm ci" fait une fois.
+
+# Interpréteur utilisé pour créer le venv. La production et la CI sont en Python 3.12 :
+# si le "python3" de la machine est une autre version, lancer par exemple
+#   make test PYTHON=python3.12
+PYTHON ?= python3
+
+# Environnement virtuel du backend, créé au premier lancement (ignoré par git : .venv/).
+VENV := backend/.venv
+
+# Fichier "témoin" : make ne reconstruit le venv que si requirements-dev.txt a changé.
+$(VENV)/.installed: backend/requirements-dev.txt
+	$(PYTHON) -m venv $(VENV)
+	$(VENV)/bin/python -m pip install --quiet -r backend/requirements-dev.txt
+	touch $@
 
 dev:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
-test:
-	@echo "TODO (Phase 3) : pytest"
+# Tests unitaires du backend (base SQLite en mémoire : ni Docker ni PostgreSQL requis).
+test: $(VENV)/.installed
+	cd backend && .venv/bin/python -m pytest
 
-lint:
-	@echo "TODO (Phase 3) : ruff + eslint"
+# Mêmes vérifications que la CI : ruff (lint + format) sur le backend, ESLint sur le frontend.
+lint: $(VENV)/.installed
+	cd backend && .venv/bin/python -m ruff check .
+	cd backend && .venv/bin/python -m ruff format --check .
+	cd frontend && npm run lint
 
 build:
 	docker compose build

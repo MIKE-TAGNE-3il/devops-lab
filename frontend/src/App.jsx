@@ -32,6 +32,9 @@ export default function App() {
 
   // Chargement initial : [] = une seule fois, au premier affichage.
   useEffect(() => {
+    // Faux positif de la règle : load() n'appelle setItems qu'APRÈS le "await" du fetch,
+    // donc jamais de façon synchrone (le cas qui provoque des rendus en cascade).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load()
   }, [])
 

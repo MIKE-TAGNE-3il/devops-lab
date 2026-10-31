@@ -1,0 +1,22 @@
+# Configuration de ruff (lint + format Python), lue par "ruff check" et "ruff format".
+# Même version de Python que l'image de production (python:3.12-slim).
+target-version = "py312"
+
+[lint]
+# Par défaut ruff n'active que E (style pycodestyle) et F (erreurs : import inutilisé,
+# variable non définie). On ajoute :
+#   I  : imports triés (diffs plus lisibles)
+#   B  : pièges courants de Python (flake8-bugbear), ex. argument mutable par défaut
+#   UP : syntaxe obsolète à moderniser (pyupgrade)
+#   S  : règles de sécurité (bandit) : secrets en dur, eval, requêtes SQL construites à la main...
+select = ["E", "F", "I", "B", "UP", "S"]
+
+# E501 (ligne > 88 caractères) désactivée : "ruff format" gère déjà la mise en page du code,
+# et il ne coupe jamais les commentaires. Ceux de ce projet sont volontairement détaillés
+# (explications en français) : on ne veut pas les hacher pour satisfaire une limite de largeur.
+ignore = ["E501"]
+
+[lint.per-file-ignores]
+# "assert" est le mécanisme normal de pytest : la règle S101 (assert interdit en production,
+# car supprimé avec python -O) n'a de sens que pour le code applicatif.
+"tests/**" = ["S101"]
