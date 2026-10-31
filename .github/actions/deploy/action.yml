@@ -1,0 +1,203 @@
+# Action composite : déploie un commit sur le VPS (images GHCR déjà publiées).
+# Utilisée par ci.yml (push vers main) et par deploy.yml (déploiement manuel).
+#
+# Pourquoi une action composite et non un workflow réutilisable (workflow_call) : dans un
+# workflow appelé, les secrets d'un Environment ne sont pas transmis par l'appelant. Ici, les
+# étapes s'exécutent DANS le job de l'appelant, qui déclare "environment: production" : il lit
+# lui-même les secrets de l'Environment et les passe en entrées de cette action.
+#
+# Prérequis du job appelant : le dépôt doit être récupéré au commit à déployer (actions/checkout
+# avec ref = sha), car le docker-compose.yml de ce commit sert au contrôle de dérive.
+#
+# La clé SSH est RESTREINTE côté serveur (commande forcée, voir le rôle Ansible "app") : elle
+# ne peut lancer que /usr/local/bin/deploy-app, c'est-à-dire déployer une image déjà publiée ou
+# revenir à la version précédente. Le docker-compose.yml du serveur est posé par Ansible ; on
+# n'en envoie que l'empreinte (sha256) pour détecter une dérive.
+
+name: Déployer sur le VPS
+description: Déploie un commit par SSH, contrôle l'application depuis Internet, revient en arrière si besoin
+
+inputs:
+  sha:
+    description: SHA complet (40 caractères) du commit à déployer
+    required: true
+  ssh-host:
+    description: Adresse du VPS (variable de l'Environment)
+    required: true
+  ssh-port:
+    description: Port SSH du VPS (variable de l'Environment)
+    required: true
+  ssh-user:
+    description: Utilisateur SSH de la CI (variable de l'Environment)
+    required: true
+  app-domain:
+    description: Nom de domaine de l'application (variable de l'Environment)
+    required: true
+  ssh-private-key:
+    description: Clé privée SSH de la CI (secret de l'Environment)
+    required: true
+  ssh-known-hosts:
+    description: Ligne known_hosts du VPS (secret de l'Environment)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Les valeurs passent par des variables d'environnement (jamais "${{ }}" dans un script) :
+    # un contenu inattendu ne peut pas être interprété comme du code shell.
+    - name: Vérifier le format du SHA
+      shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+      run: |
+        if [[ ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+          echo "::error::SHA invalide : 40 caractères hexadécimaux attendus"
+          exit 1
+        fi
+
+    # Échec rapide et lisible si l'Environment est mal configuré : on nomme ce qui manque
+    # (jamais une valeur). Sans ce contrôle, une variable vide donnait une erreur SSH obscure.
+    - name: Vérifier la configuration de l'Environment
+      shell: bash
+      env:
+        SSH_HOST: ${{ inputs.ssh-host }}
+        SSH_PORT: ${{ inputs.ssh-port }}
+        SSH_USER: ${{ inputs.ssh-user }}
+        APP_DOMAIN: ${{ inputs.app-domain }}
+        SSH_PRIVATE_KEY: ${{ inputs.ssh-private-key }}
+        SSH_KNOWN_HOSTS: ${{ inputs.ssh-known-hosts }}
+      run: |
+        manquants=()
+        for nom in SSH_HOST SSH_PORT SSH_USER APP_DOMAIN SSH_PRIVATE_KEY SSH_KNOWN_HOSTS; do
+          if [[ -z "${!nom:-}" ]]; then manquants+=("$nom"); fi
+        done
+        if [[ "${#manquants[@]}" -gt 0 ]]; then
+          echo "::error title=Configuration incomplète::Absents ou vides dans l'Environment production : ${manquants[*]}"
+          exit 1
+        fi
+        if ! grep -q 'BEGIN OPENSSH PRIVATE KEY' <<<"$SSH_PRIVATE_KEY"; then
+          echo "::error title=SSH_PRIVATE_KEY::Format inattendu : la clé doit commencer par BEGIN OPENSSH PRIVATE KEY"
+          exit 1
+        fi
+        if ! grep -q 'ssh-ed25519' <<<"$SSH_KNOWN_HOSTS"; then
+          echo "::error title=SSH_KNOWN_HOSTS::Format inattendu : une ligne ssh-ed25519 est attendue"
+          exit 1
+        fi
+        echo "Configuration de l'Environment complète."
+
+    # Échec rapide : si la CI n'a pas publié les images de ce commit (mauvais SHA, build
+    # échoué), on s'arrête avant de toucher au serveur. Les paquets sont publics.
+    - name: Vérifier que les images existent sur GHCR
+      shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+      run: |
+        for service in backend frontend; do
+          image="ghcr.io/mike-tagne-3il/devops-lab-${service}:${SHA}"
+          if ! docker manifest inspect "$image" >/dev/null; then
+            echo "::error::Image introuvable : $image"
+            exit 1
+          fi
+          echo "Image trouvée : $image"
+        done
+
+    # Mode strict : la connexion échoue si l'empreinte du serveur ne correspond pas à celle
+    # enregistrée dans le secret (protection contre l'usurpation du serveur).
+    - name: Préparer la connexion SSH
+      shell: bash
+      env:
+        SSH_HOST: ${{ inputs.ssh-host }}
+        SSH_PORT: ${{ inputs.ssh-port }}
+        SSH_USER: ${{ inputs.ssh-user }}
+        SSH_PRIVATE_KEY: ${{ inputs.ssh-private-key }}
+        SSH_KNOWN_HOSTS: ${{ inputs.ssh-known-hosts }}
+      run: |
+        install -m 700 -d ~/.ssh
+        # tr -d '\r' : un collage depuis Windows peut ajouter des retours chariot invisibles
+        # que SSH refuse ("invalid format") dans la clé et dans known_hosts.
+        printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_deploy
+        chmod 600 ~/.ssh/id_deploy
+        printf '%s\n' "$SSH_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+        # La clé doit être lisible, et known_hosts doit contenir l'entrée "[hôte]:port".
+        if ! ssh-keygen -y -f ~/.ssh/id_deploy >/dev/null 2>&1; then
+          echo "::error title=SSH_PRIVATE_KEY::La clé privée est illisible (copie tronquée ou altérée)"
+          exit 1
+        fi
+        if ! ssh-keygen -F "[${SSH_HOST}]:${SSH_PORT}" -f ~/.ssh/known_hosts >/dev/null; then
+          echo "::error title=SSH_KNOWN_HOSTS::Aucune entrée pour [${SSH_HOST}]:${SSH_PORT} (format attendu : [ip]:port ssh-ed25519 …)"
+          exit 1
+        fi
+        {
+          echo "Host vps"
+          echo "  HostName $SSH_HOST"
+          echo "  Port $SSH_PORT"
+          echo "  User $SSH_USER"
+          echo "  IdentityFile ~/.ssh/id_deploy"
+          echo "  IdentitiesOnly yes"
+          echo "  StrictHostKeyChecking yes"
+          echo "  UserKnownHostsFile ~/.ssh/known_hosts"
+          echo "  BatchMode yes"
+          echo "  ConnectTimeout 15"
+          echo "  ServerAliveInterval 15"
+        } > ~/.ssh/config
+
+    # Le serveur télécharge les images, démarre la pile, attend les healthchecks et, si
+    # quelque chose échoue, revient tout seul à la version précédente (code retour non nul).
+    - name: Déployer
+      id: deploy
+      shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+      run: |
+        set -o pipefail
+        empreinte=$(sha256sum docker-compose.yml | cut -d' ' -f1)
+        # La sortie du serveur est affichée en direct ET conservée : en cas d'échec, ses
+        # dernières lignes deviennent une annotation visible sur la page du run.
+        # Les variables sont volontairement développées ICI (côté runner) : le serveur reçoit
+        # la commande finale "deploy <sha> <empreinte>", qu'il revalide strictement.
+        # shellcheck disable=SC2029
+        if ! ssh vps "deploy $SHA $empreinte" 2>&1 | tee "$RUNNER_TEMP/deploy.log"; then
+          resume=$(tail -n 6 "$RUNNER_TEMP/deploy.log" | tr '\n' ' ')
+          echo "::error title=Déploiement échoué::${resume}"
+          exit 1
+        fi
+
+    # Contrôle de bout en bout, depuis Internet : DNS, TLS (certificat Let's Encrypt de
+    # production), Traefik, backend et base de données. --retry laisse à Traefik le temps
+    # de découvrir les nouveaux conteneurs.
+    - name: Vérifier l'application depuis Internet
+      id: sante
+      shell: bash
+      env:
+        APP_DOMAIN: ${{ inputs.app-domain }}
+      run: |
+        reponse=$(curl --fail --silent --show-error --max-time 10 \
+          --retry 10 --retry-delay 3 --retry-all-errors \
+          "https://${APP_DOMAIN}/api/health")
+        echo "API : $reponse"
+        grep -q '"database":"ok"' <<<"$reponse"
+        curl --fail --silent --show-error --max-time 10 --output /dev/null \
+          --retry 5 --retry-delay 3 --retry-all-errors "https://${APP_DOMAIN}/"
+        echo "Page d'accueil : OK"
+
+    # Le serveur a jugé la pile saine mais l'application ne répond pas correctement de
+    # l'extérieur : on revient à la version précédente.
+    - name: Retour arrière (application inaccessible)
+      if: failure() && steps.sante.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::L'application ne répond pas : retour arrière vers la version précédente"
+        ssh vps rollback
+
+    - name: Résumé
+      if: success()
+      shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+        APP_DOMAIN: ${{ inputs.app-domain }}
+      run: |
+        {
+          echo "### Déploiement réussi"
+          echo "- Commit : \`$SHA\`"
+          echo "- Application : https://${APP_DOMAIN}"
+        } >> "$GITHUB_STEP_SUMMARY"

@@ -5,7 +5,7 @@
 # une erreur de style coûte 30 secondes et non un build complet.
 # Les images ne sont publiées que sur un push vers main ; sur une PR on construit et on scanne
 # (pour valider les Dockerfiles et la sécurité avant la fusion) sans rien publier.
-# Sur main, un dernier job appelle deploy.yml pour mettre les images en production.
+# Sur main, un dernier job déploie les images en production (action .github/actions/deploy).
 #
 # Les actions sont épinglées par SHA de commit (le tag en commentaire est celui du SHA) :
 # un tag peut être déplacé par son auteur, pas un SHA. Dependabot pourra les mettre à jour.
@@ -219,16 +219,45 @@ jobs:
           echo "Image publiée : \`$IMAGE:$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
 
   # Déploiement en production : uniquement après la publication des DEUX images (needs sur
-  # toute la matrice) et uniquement sur un push vers main. Le détail est dans deploy.yml.
+  # toute la matrice) et uniquement sur un push vers main. Les étapes sont dans l'action
+  # composite .github/actions/deploy, partagée avec deploy.yml (déploiement manuel).
+  # Ce job déclare l'Environment "production" : c'est lui qui lit les secrets (clé SSH,
+  # empreinte du serveur) et les variables, limités à la branche main. Un workflow appelé
+  # (workflow_call) ne les recevrait pas : d'où l'action composite.
   deploy:
     name: Déploiement en production
     needs: build-scan-push
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
-    uses: ./.github/workflows/deploy.yml
-    with:
-      sha: ${{ github.sha }}
+    # Même groupe que deploy.yml : jamais deux déploiements en même temps, et on n'interrompt
+    # jamais celui qui est en cours.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    environment:
+      name: production
+      url: https://${{ vars.APP_DOMAIN }}
+    steps:
+      # On récupère le commit déployé : son docker-compose.yml sert au contrôle de dérive.
+      - name: Récupérer le code du commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Déployer
+        uses: ./.github/actions/deploy
+        with:
+          sha: ${{ github.sha }}
+          ssh-host: ${{ vars.SSH_HOST }}
+          ssh-port: ${{ vars.SSH_PORT }}
+          ssh-user: ${{ vars.SSH_USER }}
+          app-domain: ${{ vars.APP_DOMAIN }}
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh-known-hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
 
   # Alerte Discord : si un job de cette exécution échoue sur main, un message part dans le
   # salon (une PR en échec se voit déjà dans l'interface GitHub, inutile de la notifier).
