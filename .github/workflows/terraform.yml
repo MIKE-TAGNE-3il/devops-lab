@@ -1,1 +1,20 @@
-# Phase 4 — plan/apply Terraform en CI
+# Phase 4 — plan/apply Terraform en CI (pas encore implémenté).
+# Emplacement réservé mais VALIDE : un fichier sans "on:" ni "jobs:" est rejeté par GitHub,
+# qui affiche alors un run en échec à chaque push. Celui-ci ne se lance qu'à la main.
+
+name: Terraform
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  placeholder:
+    name: Emplacement réservé
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Rappel
+        run: echo "Terraform en CI non implémenté (phase 4)"
