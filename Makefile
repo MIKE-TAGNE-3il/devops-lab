@@ -18,8 +18,11 @@ $(VENV)/.installed: backend/requirements-dev.txt
 	$(VENV)/bin/python -m pip install --quiet -r backend/requirements-dev.txt
 	touch $@
 
+# Le compose de production exige IMAGE_TAG (voir docker-compose.yml) : en local on l'impose à "dev".
+COMPOSE_DEV := IMAGE_TAG=dev docker compose -f docker-compose.yml -f docker-compose.dev.yml
+
 dev:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+	$(COMPOSE_DEV) up -d --build
 
 # Tests unitaires du backend (base SQLite en mémoire : ni Docker ni PostgreSQL requis).
 test: $(VENV)/.installed
@@ -31,8 +34,9 @@ lint: $(VENV)/.installed
 	cd backend && .venv/bin/python -m ruff format --check .
 	cd frontend && npm run lint
 
+# Construit les images en local (le compose de production seul n'a plus de "build:").
 build:
-	docker compose build
+	$(COMPOSE_DEV) build
 
 deploy:
 	@echo "TODO (Phase 3) : déploiement manuel de debug"

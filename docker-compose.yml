@@ -5,13 +5,25 @@
 #
 # Ce fichier est celui de la PRODUCTION : aucun port publié, le trafic arrive par Traefik
 # (réseau externe traefik-public, créé par Ansible). Pour travailler sur le PC, ajouter les
-# ports avec docker-compose.dev.yml (voir "make dev").
+# ports et la construction locale des images avec docker-compose.dev.yml (voir "make dev").
+#
+# Les images ne sont PAS construites ici : la CI les construit, les scanne avec Trivy et les
+# publie sur GHCR, taguées par le SHA du commit. Le serveur ne fait que les télécharger.
+# Variable obligatoire : IMAGE_TAG (SHA du commit à déployer, fourni par le déploiement).
 
 # URL de la base, définie UNE fois (ancre YAML &database-url) puis réutilisée par
 # migrate et backend avec *database-url. Le mot de passe n'est écrit qu'à un seul endroit.
 # "db" est le nom du service : le DNS interne de Compose le résout vers le conteneur
 # PostgreSQL. Ne jamais mettre "localhost" : dans un conteneur, c'est le conteneur lui-même.
 x-database-url: &database-url postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+
+# Images applicatives publiées sur GHCR par la CI (même mécanisme d'ancre que ci-dessus).
+# Le nom est en minuscules : GHCR refuse les majuscules (le compte GitHub est MIKE-TAGNE-3il).
+# ${IMAGE_TAG:?...} : pas de valeur par défaut, volontairement. Un tag oublié ferait tirer
+# "latest" ou une image au hasard ; ici compose s'arrête avec un message clair. On ne déploie
+# jamais "latest" : seul le SHA identifie précisément ce qui tourne (et permet le rollback).
+x-backend-image: &backend-image ghcr.io/mike-tagne-3il/devops-lab-backend:${IMAGE_TAG:?IMAGE_TAG manquant (SHA du commit à déployer)}
+x-frontend-image: &frontend-image ghcr.io/mike-tagne-3il/devops-lab-frontend:${IMAGE_TAG:?IMAGE_TAG manquant (SHA du commit à déployer)}
 
 services:
   db:
@@ -51,9 +63,8 @@ services:
     # conteneurs de la stack, jamais depuis l'hôte ni depuis Internet.
 
   migrate:
-    # Même image que le backend (même Dockerfile, mêmes couches en cache), mais une autre commande.
-    build: ./backend
-    image: devops-lab-backend:dev
+    # Même image que le backend (celle de la CI), mais une autre commande.
+    image: *backend-image
 
     # Tâche ponctuelle : applique les migrations puis le conteneur s'arrête (code 0).
     # alembic upgrade head est idempotent : relancé sur une base à jour, il ne fait rien.
@@ -79,9 +90,9 @@ services:
         condition: service_healthy
 
   backend:
-    # Construit l'image depuis backend/Dockerfile (contrairement à db, image toute faite).
-    build: ./backend
-    image: devops-lab-backend:dev
+    # Image construite et publiée par la CI (voir en-tête) ; en dev, docker-compose.dev.yml
+    # la construit localement depuis backend/Dockerfile.
+    image: *backend-image
 
     restart: unless-stopped
 
@@ -130,8 +141,8 @@ services:
 
   frontend:
     # Nginx non-root qui sert l'application React compilée (voir frontend/Dockerfile).
-    build: ./frontend
-    image: devops-lab-frontend:dev
+    # Image publiée par la CI ; construite localement en dev (docker-compose.dev.yml).
+    image: *frontend-image
 
     restart: unless-stopped
 

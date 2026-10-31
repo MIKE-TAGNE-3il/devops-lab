@@ -1,19 +1,29 @@
-# Surcharge pour travailler sur le PC, sans Traefik : ajoute les ports que Traefik rend
-# inutiles en production. Compose fusionne ce fichier avec docker-compose.yml.
+# Surcharge pour travailler sur le PC, sans Traefik : construit les images localement (en
+# production elles viennent de GHCR) et ajoute les ports que Traefik rend inutiles.
+# Compose fusionne ce fichier avec docker-compose.yml.
 #
 # Usage : make dev
-#   (équivaut à : docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build)
+#   (équivaut à : IMAGE_TAG=dev docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build)
 #
 # Prérequis, une seule fois sur le PC (Ansible le crée sur le serveur) :
 #   docker network create traefik-public
-# Dans le .env local : DOMAIN=localhost (les labels Traefik sont simplement ignorés ici).
+# Dans le .env local : DOMAIN=localhost (les labels Traefik sont simplement ignorés ici)
+# et IMAGE_TAG=dev (ou le préfixer à la commande, comme le fait le Makefile).
+#
+# Le "build:" ajoute à l'image du compose principal sa recette de construction : l'image est
+# construite ici puis nommée ghcr.io/.../devops-lab-<service>:dev, sans jamais être téléchargée.
 
 services:
+  migrate:
+    build: ./backend
+
   backend:
+    build: ./backend
     ports:
       # 127.0.0.1 : joignable uniquement depuis cette machine, pas depuis le réseau.
       - "127.0.0.1:8000:8000"
 
   frontend:
+    build: ./frontend
     ports:
       - "127.0.0.1:8080:8080"
