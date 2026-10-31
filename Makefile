@@ -38,5 +38,9 @@ lint: $(VENV)/.installed
 build:
 	$(COMPOSE_DEV) build
 
+# Le déploiement est automatique (push sur main, voir .github/workflows/ci.yml). Pour un
+# déploiement ou un retour arrière manuel : onglet Actions > Deploy > Run workflow, avec le SHA
+# d'un commit dont les images sont publiées sur GHCR.
 deploy:
-	@echo "TODO (Phase 3) : déploiement manuel de debug"
+	@echo "Déploiement automatique : push sur main."
+	@echo "Manuel : GitHub > Actions > Deploy > Run workflow (SHA complet du commit)."

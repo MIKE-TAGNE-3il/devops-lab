@@ -45,7 +45,8 @@ devops-lab/
 │   └── roles/
 │       ├── common/            # Users, SSH, fail2ban, UFW
 │       ├── docker/            # Docker CE + Compose
-│       └── traefik/           # Reverse proxy + TLS (acme_staging bascule test/production)
+│       ├── traefik/           # Reverse proxy + TLS (acme_staging bascule test/production)
+│       └── app/               # Utilisateur `cd` de la CI, /opt/devops-lab, compose prod, script deploy-app
 ├── backend/                   # API FastAPI
 │   ├── app/                   # config, db, models, schemas, routers/
 │   ├── migrations/            # Migrations Alembic (alembic.ini à la racine de backend/)
@@ -63,10 +64,11 @@ devops-lab/
 ├── .env.example               # Variables d'environnement (template)
 ├── Makefile                   # Commandes utilitaires
 └── .github/
+    ├── actions/deploy/        # Action composite : déploiement SSH + contrôle + rollback
     └── workflows/
-        ├── ci.yml             # Lint, test, build, scan, push GHCR
-        ├── deploy.yml         # Déploiement sur le VPS
-        └── terraform.yml      # Plan/Apply Terraform
+        ├── ci.yml             # Lint, test, build, scan, push GHCR, déploiement (main), alerte Discord
+        ├── deploy.yml         # Déploiement / retour arrière MANUEL (workflow_dispatch)
+        └── terraform.yml      # Plan/Apply Terraform (Phase 4, emplacement réservé)
 ```
 
 ## Phases du projet
@@ -85,14 +87,17 @@ Le projet se réalise en 4 semaines séquentielles. Ne jamais sauter une phase.
 - App FastAPI + React + PostgreSQL conteneurisée (CRUD /api/items, migrations Alembic via un service `migrate` à usage unique)
 - Dockerfiles multi-stage (images légères, user non-root)
 - docker-compose.yml avec healthchecks, réseaux séparés (réseau `internal` pour la base), labels Traefik
-- Images construites sur le serveur : le déploiement par images GHCR arrive en Phase 3
+- Images construites sur le serveur à ce stade (remplacé en Phase 3 par des images GHCR taguées par le SHA du commit)
 - **Critère de validation :** `docker compose up -d` lance tout, l'app est accessible en HTTPS
 
 ### Phase 3 — Pipeline CI/CD (GitHub Actions)
-- **Statut :** À FAIRE
-- CI : lint (ruff + eslint), tests (pytest), build images, scan Trivy, push GHCR
-- CD : déploiement SSH, rolling update, rollback en cas d'échec
-- Notifications Discord sur échec
+- **Statut :** VALIDEE (31/10/2026) — push sur main -> production en ~3 min (run de 2 min 25 s), retour arrière automatique prouvé sur le serveur (panne ≈ 16 s), idempotence Ansible (changed=0)
+- CI : lint (ruff + eslint), tests (pytest), build images, scan Trivy bloquant (HIGH/CRITICAL corrigeables), push GHCR taggé par le SHA du commit
+- CD : déploiement SSH par clé RESTREINTE (commande forcée `deploy-app`, utilisateur `cd` sans sudo), `docker compose up --wait`, test de l'app depuis Internet, rollback automatique vers la version précédente. Ce n'est PAS un rolling update sans coupure (les conteneurs sont recréés) : voir le README, « Limites connues »
+- Le docker-compose.yml de production est posé par Ansible (contrôle de dérive par sha256) : modifier le compose = relancer Ansible avant le push
+- Déploiement dans une action composite (`.github/actions/deploy`) exécutée par un job qui déclare l'Environment `production` : un workflow appelé (`workflow_call`) ne reçoit pas les secrets d'un Environment
+- Notifications Discord sur échec (secret de dépôt `DISCORD_WEBHOOK`)
+- Reste à faire côté GitHub (réglages, pas du code) : règle de protection de `main` exigeant les contrôles verts
 - **Critère de validation :** un push sur main déclenche le déploiement automatique en < 5 min
 
 ### Phase 4 — Terraform (IaC)
@@ -118,7 +123,8 @@ Le projet se réalise en 4 semaines séquentielles. Ne jamais sauter une phase.
 
 ### Docker
 - Images de base : versions spécifiques (python:3.12-slim, node:24-alpine, nginxinc/nginx-unprivileged:1.30-alpine) — JAMAIS `latest`. Node 20 est en fin de vie depuis le 30/04/2026 ; nginx-unprivileged (port 8080) permet un Nginx non-root.
-- Après une modification du code ou d'un Dockerfile : `docker compose up -d --build` (sans `--build`, compose réutilise l'image existante)
+- Après une modification du code ou d'un Dockerfile, sur le PC : `make dev` (équivaut à `IMAGE_TAG=dev docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build` ; sans `--build`, compose réutilise l'image existante). `IMAGE_TAG` est obligatoire dans le compose de production (pas de valeur par défaut)
+- Sur le serveur, les images ne sont jamais construites : elles viennent de GHCR, taguées par le SHA du commit
 - Multi-stage builds obligatoires
 - User non-root dans les images de production
 - Healthchecks dans chaque Dockerfile et dans docker-compose.yml
@@ -175,7 +181,7 @@ SSH_USER=deploy
 | Base de données | PostgreSQL | 16 |
 | CI/CD | GitHub Actions | - |
 | Registry | GHCR | - |
-| Scan sécurité | Trivy | latest |
-| Lint Python | Ruff | latest |
-| Lint JS | ESLint | latest |
+| Scan sécurité | Trivy | 0.76.1 (épinglé dans ci.yml) |
+| Lint Python | Ruff | 0.17.3 (requirements-dev.txt) |
+| Lint JS | ESLint | 10.14.0 (package.json) |
 | Tests Python | Pytest | latest |
