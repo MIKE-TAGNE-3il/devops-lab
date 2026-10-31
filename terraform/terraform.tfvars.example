@@ -1,1 +1,6 @@
-# Exemple de variables Terraform — copier en terraform.tfvars (jamais commit le vrai fichier)
+# Les valeurs de chaque environnement sont versionnées dans envs/ (elles ne contiennent aucun
+# secret) :
+#   terraform plan -var-file=envs/prod.tfvars   (workspace devops-lab-prod)
+#   terraform plan -var-file=envs/test.tfvars   (workspace devops-lab-test)
+# Le jeton Hetzner se passe par la variable d'environnement HCLOUD_TOKEN, JAMAIS dans un fichier.
+# Un fichier terraform.tfvars local reste ignoré par Git (voir .gitignore).
