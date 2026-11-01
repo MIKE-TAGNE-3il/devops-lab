@@ -159,3 +159,61 @@ jobs:
               fi ;;
             *) echo "::error::terraform plan a échoué (code ${CODE:-inconnu})."; exit 1 ;;
           esac
+
+  # Alerte Discord : un échec le lundi (ou à la main) est presque toujours une DÉRIVE, c'est-à-dire
+  # une infrastructure modifiée hors du code (console Hetzner) ou un code non appliqué. On ne
+  # notifie pas les PR : leur échec se voit déjà dans l'interface GitHub. Modèle de ci.yml.
+  notify-failure:
+    name: Notification Discord (échec)
+    needs: [validate, plan]
+    if: ${{ failure() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Aucun droit sur le dépôt : ce job n'appelle que Discord.
+    permissions: {}
+    env:
+      # Secret de DÉPÔT. Les valeurs passent par l'environnement, jamais par "${{ }}" dans le script.
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+      NEEDS: ${{ toJSON(needs) }}
+      EVENEMENT: ${{ github.event_name }}
+      DEPOT: ${{ github.repository }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Envoyer l'alerte sur Discord
+        run: |
+          if [[ -z "$DISCORD_WEBHOOK" ]]; then
+            echo "::warning::Secret DISCORD_WEBHOOK absent : notification ignorée"
+            exit 0
+          fi
+          # Noms des jobs en échec, tirés du contexte "needs".
+          echecs=$(jq -r 'to_entries | map(select(.value.result == "failure")) | map(.key) | join(", ")' <<<"$NEEDS")
+          # Un échec du plan seul (la validation est verte) évoque une dérive ; sinon c'est le code.
+          if [[ "$echecs" == "plan" ]]; then
+            cause="Dérive probable : l'infrastructure ne correspond plus au code (ou le plan a échoué)."
+          else
+            cause="Le code Terraform est invalide (format ou validation)."
+          fi
+          payload=$(jq -n \
+            --arg echecs "${echecs:-inconnu}" \
+            --arg cause "$cause" \
+            --arg evenement "$EVENEMENT" \
+            --arg depot "$DEPOT" \
+            --arg url "$RUN_URL" \
+            '{
+              username: "GitHub Actions",
+              embeds: [{
+                title: "Terraform en échec sur main",
+                url: $url,
+                color: 15548997,
+                description: $cause,
+                fields: [
+                  {name: "Jobs en échec", value: $echecs},
+                  {name: "Déclencheur", value: $evenement, inline: true},
+                  {name: "Dépôt", value: $depot, inline: true}
+                ]
+              }]
+            }')
+          curl --fail --silent --show-error --retry 3 \
+            --header 'Content-Type: application/json' \
+            --data "$payload" "$DISCORD_WEBHOOK"
+          echo "Alerte envoyée."
