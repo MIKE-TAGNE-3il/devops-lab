@@ -14,7 +14,7 @@ justifié (voir [Choix techniques](#choix-techniques)).
 | 1. Fondations serveur | Ansible : durcissement SSH, fail2ban, UFW, Docker, Traefik | ✅ validée, idempotence prouvée (`changed=0`) |
 | 2. Conteneurisation | Docker : API, frontend, base, réseaux isolés, HTTPS | ✅ validée |
 | 3. Pipeline CI/CD | GitHub Actions : lint, tests, build, scan Trivy, GHCR, déploiement SSH avec retour arrière | ✅ validée |
-| 4. Infrastructure as Code | Terraform : provisioning du VPS, state distant | ⏳ à venir |
+| 4. Infrastructure as Code | Terraform : provisioning du VPS, pare-feu Hetzner, state distant | ⏳ en cours |
 
 Le détail de chaque phase et ses critères de validation sont dans [`CLAUDE.md`](CLAUDE.md).
 
@@ -74,7 +74,25 @@ git push (main)
 | Idempotence du serveur | `ansible-playbook` rejoué : `changed=0` |
 | Échec lisible | un lint rouge sur une PR arrête le pipeline, les tests sont ignorés |
 
+## Preuves de la phase 4
+
+| Critère | Mesure |
+|---|---|
+| `terraform apply` crée un VPS fonctionnel | serveur et pare-feu créés en **14,7 s** ; joignable en SSH avec la clé du projet, Ubuntu 24.04 |
+| `terraform destroy` le supprime | **20,4 s** pour supprimer les deux ressources ; ensuite, seul le serveur de production reste chez Hetzner |
+| Le code décrit la production sans la modifier | le serveur existant est **importé** (`terraform import`) : `terraform plan` affiche « No changes » |
+| Le pare-feu filtre avant la VM | port ouvert sans service : `Connection refused` (le paquet arrive) ; port non listé : `timed out` (le paquet est jeté) |
+| Le state n'est pas dans Git | état distant sur Terraform Cloud, deux workspaces (production et test jetable) |
+
 ## Ce qui est en place
+
+**Infrastructure (Terraform)**
+- Serveur Hetzner Cloud et **Cloud Firewall** (80, 443, SSH, ping), décrits dans `terraform/`.
+  Le même code sert la production (importée, **protégée contre la suppression**) et un serveur
+  jetable, via des fichiers de valeurs par environnement (`envs/prod.tfvars`, `envs/test.tfvars`).
+- State distant sur **Terraform Cloud** (un workspace par environnement) ; exécution locale.
+- `terraform.yml` : format et validation, puis **plan en lecture seule** de la production sur
+  chaque PR qui touche `terraform/` et chaque lundi (détection de dérive). Jamais d'`apply` en CI.
 
 **Serveur (Ansible, idempotent)**
 - Utilisateur dédié, SSH par clé uniquement, connexion root et mot de passe désactivés, port non
@@ -124,6 +142,16 @@ git push (main)
 | Action composite pour le déploiement (et non un workflow appelé) | un workflow appelé ne reçoit pas les secrets d'un Environment ; l'action s'exécute dans le job qui déclare l'Environment, et sert à la fois à la CI et au déploiement manuel |
 | `up --wait` + test de l'application depuis Internet | « démarré » ne veut pas dire « prêt » : on attend les healthchecks, puis on vérifie DNS, TLS, Traefik, API et base |
 | Essais Let's Encrypt en mode « staging » d'abord | évite d'épuiser les limites d'émission du domaine |
+| Serveur existant **importé** plutôt que recréé | l'IP, le domaine, les certificats et les secrets GitHub restent inchangés ; l'apply/destroy est prouvé sur un serveur jetable |
+| Un code, deux workspaces, des fichiers `envs/*.tfvars` | un seul code à relire et à tester ; seules les valeurs (nom, région, ports SSH) changent |
+| `ignore_changes = [ssh_keys, user_data]` | l'API ne renvoie jamais ces champs : sans cela, un serveur importé paraîtrait modifié et Terraform voudrait le **recréer** |
+| Clé SSH **lue** (`data`) et non créée | Hetzner refuse deux clés identiques : le workspace de test échouerait |
+| `delete_protection` sur la production | un `terraform destroy` lancé dans le mauvais workspace est refusé par Hetzner, quel que soit l'outil |
+| Cloud Firewall **en plus** d'UFW | deux couches indépendantes : un UFW mal configuré n'ouvre pas les ports |
+| Plan sauvegardé (`-out`) puis `apply` de ce fichier | ce qui est appliqué est exactement ce qui a été relu |
+| Exécution locale, state distant | le jeton Hetzner reste sur le poste (ou dans la CI) ; Terraform Cloud ne fait que stocker et verrouiller l'état |
+| Jeton Hetzner de la CI en **lecture seule**, pas d'`apply` en CI | un secret volé dans la CI ne permet de rien modifier chez Hetzner |
+| `-lock=false` sur les plans de CI | un plan ne modifie pas l'état : une exécution annulée ne peut pas bloquer le workspace |
 
 ## Structure du dépôt
 
@@ -133,9 +161,9 @@ backend/        API FastAPI : app/, migrations/, tests/, Dockerfile, ruff.toml
 frontend/       React/Vite, Dockerfile, nginx.conf, eslint.config.js
 docker-compose.yml       production (sans ports, derrière Traefik, images GHCR par IMAGE_TAG)
 docker-compose.dev.yml   ajoute le build local et les ports pour le PC
-terraform/      provisioning du VPS (Phase 4)
+terraform/      VPS et pare-feu Hetzner : main.tf, firewall.tf, variables.tf, backend.tf, envs/
 .github/
-  workflows/    ci.yml (CI + déploiement), deploy.yml (déploiement manuel), terraform.yml (Phase 4)
+  workflows/    ci.yml (CI + déploiement), deploy.yml (déploiement manuel), terraform.yml (format, validation, plan en lecture seule)
   actions/deploy/   action composite de déploiement
 ```
 
@@ -168,6 +196,29 @@ make test   # pytest sur une base SQLite en mémoire
 frontend demande Node et un `npm ci` préalable dans `frontend/`.
 
 ## Déployer
+
+### Provisionner l'infrastructure (Terraform)
+
+Prérequis : Terraform ≥ 1.7, un jeton API Hetzner (Read & Write) dans `HCLOUD_TOKEN`, et
+`terraform login` (state sur Terraform Cloud). Les workspaces doivent être en exécution **Local**.
+Depuis `terraform/` (sous PowerShell 5.1, mettre les options entre guillemets : `"-var-file=…"`) :
+
+```bash
+terraform init
+terraform workspace select devops-lab-prod
+terraform plan "-var-file=envs/prod.tfvars" "-out=tfplan"   # relire avant d'appliquer
+terraform apply "tfplan"                                    # applique exactement ce plan
+```
+
+- **Serveur jetable** (test) : `terraform workspace select devops-lab-test`, puis le même cycle
+  avec `envs/test.tfvars`, et `terraform plan -destroy` suivi de `apply` pour le supprimer.
+  Toujours lancer `terraform workspace show` avant un `apply` ou un `destroy`.
+- **Reprendre un serveur existant** : `terraform import "-var-file=envs/prod.tfvars"
+  hcloud_server.main <id>` puis vérifier que le plan affiche « No changes ».
+- **CI** : secrets de **dépôt** `TF_API_TOKEN` (jeton Terraform Cloud) et `HCLOUD_TOKEN`
+  (jeton Hetzner en **lecture seule**, distinct de celui du poste).
+- Ensuite, configurer le serveur avec Ansible (`infra/`), avec l'IP donnée par
+  `terraform output ipv4_address`.
 
 ### Première installation
 
@@ -227,5 +278,13 @@ Ce lab est un projet d'apprentissage ; voici ce qu'il ne fait pas encore :
 - **La documentation interactive de l'API** (`/api/docs`) est publique.
 - **Nom de domaine gratuit** (sslip.io) dont les limites Let's Encrypt sont partagées ; un domaine
   dédié ne demanderait de changer qu'une variable.
-- Le **provisioning Terraform** (phase 4) n'est pas encore écrit : le serveur n'est pas encore
-  géré comme du code.
+- **Terraform ne gère que le serveur et son pare-feu** : la clé SSH, le DNS et le compte Hetzner
+  restent hors du code (la clé est lue, pas créée). Le serveur est décrit, pas configuré :
+  Ansible reste responsable de ce qu'il contient.
+- **Recréer la production n'est pas garanti à l'identique** : le type du serveur n'est plus
+  proposé dans sa région d'origine. D'où la protection contre la suppression et l'import plutôt
+  qu'une recréation.
+- **SSH ouvert à tout Internet** (clé obligatoire, fail2ban, port non standard) : les runners
+  GitHub n'ont pas d'adresse fixe, on ne peut donc pas restreindre par IP source.
+- **L'`apply` reste manuel** (depuis le poste, sur un plan relu) : choix volontaire, la CI ne
+  détient qu'un jeton en lecture seule. Le plan de CI d'un dépôt public est visible dans les logs.

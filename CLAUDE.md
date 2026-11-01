@@ -31,10 +31,14 @@ devops-lab/
 ├── CLAUDE.md                  # Ce fichier
 ├── README.md                  # Documentation publique du projet
 ├── terraform/                 # Provisioning du VPS Hetzner
-│   ├── main.tf
+│   ├── main.tf                # Serveur (+ clé SSH lue)
+│   ├── firewall.tf            # Cloud Firewall
 │   ├── variables.tf
 │   ├── outputs.tf
-│   └── versions.tf
+│   ├── versions.tf            # Terraform + provider hcloud
+│   ├── backend.tf             # State Terraform Cloud (organisation, tag des workspaces)
+│   ├── .terraform.lock.hcl    # Versions et empreintes des providers (versionné)
+│   └── envs/                  # prod.tfvars, test.tfvars (sans secret)
 ├── infra/                     # Configuration serveur Ansible
 │   ├── ansible.cfg
 │   ├── inventory/
@@ -68,7 +72,7 @@ devops-lab/
     └── workflows/
         ├── ci.yml             # Lint, test, build, scan, push GHCR, déploiement (main), alerte Discord
         ├── deploy.yml         # Déploiement / retour arrière MANUEL (workflow_dispatch)
-        └── terraform.yml      # Plan/Apply Terraform (Phase 4, emplacement réservé)
+        └── terraform.yml      # Format, validation, plan de la prod en lecture seule (PR, lundi)
 ```
 
 ## Phases du projet
@@ -101,10 +105,11 @@ Le projet se réalise en 4 semaines séquentielles. Ne jamais sauter une phase.
 - **Critère de validation :** un push sur main déclenche le déploiement automatique en < 5 min
 
 ### Phase 4 — Terraform (IaC)
-- **Statut :** À FAIRE
-- Provisioning du VPS Hetzner via Terraform
-- State en remote (Terraform Cloud)
-- `terraform plan` intégré à la CI sur les PR
+- **Statut :** EN COURS — critère apply/destroy PROUVÉ sur un serveur jetable (création 14,7 s, suppression 20,4 s) ; prod importée (`plan` = « No changes ») et protégée contre la suppression. Reste : appliquer le pare-feu à la prod (vérifier avant que le SSH écoute sur 2222 seulement : fait), créer les secrets de dépôt `TF_API_TOKEN` et `HCLOUD_TOKEN` (jeton Hetzner en LECTURE SEULE) puis valider `terraform.yml` sur une PR
+- Provisioning du VPS Hetzner via Terraform : serveur + Cloud Firewall (80, 443, SSH, ping), clé SSH lue (`data`) et non créée
+- Un code, deux workspaces Terraform Cloud (`devops-lab-prod` importé, `devops-lab-test` jetable), valeurs dans `terraform/envs/*.tfvars` ; exécution LOCALE, state distant
+- `terraform plan` en CI (lecture seule, jamais d'apply) sur les PR et chaque lundi (dérive) : `.github/workflows/terraform.yml`
+- Pièges : le serveur de prod s'appelle encore `devops-lab-test` (nom historique) ; `cx23` n'est plus disponible à fsn1 (région de la prod) donc le test est en nbg1 ; sous PowerShell 5.1, mettre `"-var-file=…"` entre guillemets
 - **Critère de validation :** `terraform apply` crée un VPS fonctionnel, `terraform destroy` le supprime
 
 ## Conventions de code

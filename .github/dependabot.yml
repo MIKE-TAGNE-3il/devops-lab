@@ -21,6 +21,21 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # Provider Hetzner de Terraform (.terraform.lock.hcl). La contrainte "~> 1.70" de versions.tf
+  # n'autorise que des versions 1.x : un saut de version majeure resterait une décision.
+  - package-ecosystem: terraform
+    directory: /terraform
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Paris
+    groups:
+      terraform:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+
   # Dépendances Python du backend (requirements.txt et requirements-dev.txt, versions épinglées).
   - package-ecosystem: pip
     directory: /backend

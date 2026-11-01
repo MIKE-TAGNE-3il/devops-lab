@@ -5,8 +5,13 @@
 .terraform/
 *.tfstate
 *.tfstate.backup
+# Plans sauvegardés (terraform plan -out=tfplan) : peuvent contenir des valeurs sensibles
+tfplan
+*.tfplan
 *.tfvars
 !terraform.tfvars.example
+# Valeurs par environnement : aucun secret (le jeton passe par HCLOUD_TOKEN), donc versionnées
+!terraform/envs/*.tfvars
 
 # Python
 __pycache__/

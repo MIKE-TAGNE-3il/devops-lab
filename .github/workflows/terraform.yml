@@ -1,20 +1,161 @@
-# Phase 4 — plan/apply Terraform en CI (pas encore implémenté).
-# Emplacement réservé mais VALIDE : un fichier sans "on:" ni "jobs:" est rejeté par GitHub,
-# qui affiche alors un run en échec à chaque push. Celui-ci ne se lance qu'à la main.
+# Terraform — contrôles de l'infrastructure en code (dossier terraform/).
+# Deux jobs, "fail fast" :
+#   1. format + validation : sans aucun secret, donc aussi sur les PR de forks ;
+#   2. plan de la PRODUCTION en LECTURE SEULE : compare le code à l'infrastructure réelle.
+# Se lance sur toute PR qui touche terraform/, chaque lundi (détection de dérive) et à la main.
+#
+# JAMAIS d'apply ici : l'application des changements reste un geste humain, depuis le PC, sur un
+# plan relu (terraform apply "tfplan"). La CI ne peut donc rien modifier chez Hetzner : le jeton
+# qu'elle détient est en lecture seule. Le plan voit l'état (Terraform Cloud) et l'infrastructure.
+#
+# Dérive : si l'infrastructure a été modifiée à la main (console Hetzner) ou si le code a changé
+# sans apply, le plan du lundi échoue : l'écart est visible au lieu de rester silencieux.
+#
+# Les actions sont épinglées par SHA de commit (voir ci.yml).
 
 name: Terraform
 
 on:
+  pull_request:
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform.yml"
+  schedule:
+    # Lundi 05:30 UTC, avant les PR Dependabot de 06:00 (heure de Paris).
+    - cron: "30 5 * * 1"
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# Un plan est une lecture : sur une PR, un nouveau push annule le plan devenu inutile.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Même version que celle utilisée sur le PC (terraform version).
+  TERRAFORM_VERSION: "1.16.6"
+
 jobs:
-  placeholder:
-    name: Emplacement réservé
+  validate:
+    name: Format et validation
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 10
     steps:
-      - name: Rappel
-        run: echo "Terraform en CI non implémenté (phase 4)"
+      - name: Récupérer le code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Installer Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          # Sans l'enveloppe qui capture la sortie : les messages restent lisibles dans les logs.
+          terraform_wrapper: false
+
+      - name: terraform fmt (format)
+        working-directory: terraform
+        run: terraform fmt -check -diff -recursive
+
+      # -backend=false : télécharge seulement les providers (vérifiés par .terraform.lock.hcl),
+      # sans contacter Terraform Cloud : aucun secret nécessaire.
+      - name: terraform init
+        working-directory: terraform
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        working-directory: terraform
+        run: terraform validate
+
+  plan:
+    name: Plan de la production (lecture seule)
+    needs: validate
+    # Les secrets n'existent pas pour une PR de fork ni pour Dependabot : on saute ce job
+    # plutôt que de le faire échouer. Le job de validation, lui, a déjà tourné.
+    if: >-
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Jeton Terraform Cloud : lit le state (variable TF_TOKEN_<hôte avec _ pour les points>).
+      TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
+      # Jeton Hetzner en LECTURE SEULE (pas celui du PC) : un plan ne modifie rien.
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+      # Choisit le workspace Terraform Cloud (le code en déclare deux, repérés par un tag).
+      TF_WORKSPACE: devops-lab-prod
+    steps:
+      # Les secrets sont des dépôt-secrets : tant qu'ils ne sont pas créés, on avertit au lieu
+      # d'échouer (même principe que la notification Discord de ci.yml).
+      - name: Vérifier la présence des secrets
+        id: secrets
+        run: |
+          if [[ -z "$TF_TOKEN_app_terraform_io" || -z "$HCLOUD_TOKEN" ]]; then
+            echo "::warning::Secrets TF_API_TOKEN et/ou HCLOUD_TOKEN absents : plan ignoré"
+            echo "disponibles=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "disponibles=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Récupérer le code
+        if: steps.secrets.outputs.disponibles == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Installer Terraform
+        if: steps.secrets.outputs.disponibles == 'true'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform init
+        if: steps.secrets.outputs.disponibles == 'true'
+        working-directory: terraform
+        run: terraform init -input=false
+
+      # -detailed-exitcode : 0 = aucun écart, 1 = erreur, 2 = des changements sont prévus.
+      # -lock=false : un plan ne modifie pas le state ; sans verrou, une exécution annulée ne
+      # peut pas bloquer le workspace et on ne gêne pas un apply lancé depuis le PC.
+      - name: terraform plan
+        if: steps.secrets.outputs.disponibles == 'true'
+        id: plan
+        working-directory: terraform
+        run: |
+          # Le code 2 (changements prévus) ne doit pas arrêter le script : on le lit nous-mêmes
+          # et l'étape suivante décide s'il s'agit d'une erreur (dérive) ou d'une information (PR).
+          set +e
+          terraform plan -input=false -lock=false -no-color -detailed-exitcode \
+            -var-file=envs/prod.tfvars | tee plan.txt
+          # tee masque le code de terraform : PIPESTATUS[0] est celui de la première commande.
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Plan Terraform de la production'
+            echo '```'
+            tail -n 60 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Interpréter le résultat
+        if: steps.secrets.outputs.disponibles == 'true'
+        env:
+          CODE: ${{ steps.plan.outputs.code }}
+          EVENEMENT: ${{ github.event_name }}
+        run: |
+          case "$CODE" in
+            0) echo "Aucun écart : le code décrit exactement l'infrastructure." ;;
+            2)
+              if [[ "$EVENEMENT" == "pull_request" ]]; then
+                echo "::notice::Cette PR change l'infrastructure : relire le plan avant tout apply local."
+              else
+                echo "::error::Dérive détectée : l'infrastructure ne correspond plus au code."
+                exit 1
+              fi ;;
+            *) echo "::error::terraform plan a échoué (code ${CODE:-inconnu})."; exit 1 ;;
+          esac
