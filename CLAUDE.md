@@ -105,7 +105,7 @@ Le projet se réalise en 4 semaines séquentielles. Ne jamais sauter une phase.
 - **Critère de validation :** un push sur main déclenche le déploiement automatique en < 5 min
 
 ### Phase 4 — Terraform (IaC)
-- **Statut :** EN COURS — critère apply/destroy PROUVÉ sur un serveur jetable (création 14,7 s, suppression 20,4 s) ; prod importée (`plan` = « No changes ») et protégée contre la suppression. Reste : appliquer le pare-feu à la prod (vérifier avant que le SSH écoute sur 2222 seulement : fait), créer les secrets de dépôt `TF_API_TOKEN` et `HCLOUD_TOKEN` (jeton Hetzner en LECTURE SEULE) puis valider `terraform.yml` sur une PR
+- **Statut :** VALIDEE (01/11/2026) — apply/destroy prouvé sur un serveur jetable (création 14,7 s, suppression 20,4 s) ; prod importée (`plan` = « No changes »), protégée contre la suppression, pare-feu appliqué (SSH 2222 et HTTPS OK, ports 22 et 8080 filtrés) ; plan de CI rejoué avec succès sur `main` (aucun écart), secrets de dépôt `TF_API_TOKEN` et `HCLOUD_TOKEN` (jeton Hetzner en LECTURE SEULE)
 - Provisioning du VPS Hetzner via Terraform : serveur + Cloud Firewall (80, 443, SSH, ping), clé SSH lue (`data`) et non créée
 - Un code, deux workspaces Terraform Cloud (`devops-lab-prod` importé, `devops-lab-test` jetable), valeurs dans `terraform/envs/*.tfvars` ; exécution LOCALE, state distant
 - `terraform plan` en CI (lecture seule, jamais d'apply) sur les PR et chaque lundi (dérive) : `.github/workflows/terraform.yml`

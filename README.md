@@ -14,7 +14,7 @@ justifié (voir [Choix techniques](#choix-techniques)).
 | 1. Fondations serveur | Ansible : durcissement SSH, fail2ban, UFW, Docker, Traefik | ✅ validée, idempotence prouvée (`changed=0`) |
 | 2. Conteneurisation | Docker : API, frontend, base, réseaux isolés, HTTPS | ✅ validée |
 | 3. Pipeline CI/CD | GitHub Actions : lint, tests, build, scan Trivy, GHCR, déploiement SSH avec retour arrière | ✅ validée |
-| 4. Infrastructure as Code | Terraform : provisioning du VPS, pare-feu Hetzner, state distant | ⏳ en cours |
+| 4. Infrastructure as Code | Terraform : provisioning du VPS, pare-feu Hetzner, state distant | ✅ validée |
 
 Le détail de chaque phase et ses critères de validation sont dans [`CLAUDE.md`](CLAUDE.md).
 
@@ -82,7 +82,9 @@ git push (main)
 | `terraform destroy` le supprime | **20,4 s** pour supprimer les deux ressources ; ensuite, seul le serveur de production reste chez Hetzner |
 | Le code décrit la production sans la modifier | le serveur existant est **importé** (`terraform import`) : `terraform plan` affiche « No changes » |
 | Le pare-feu filtre avant la VM | port ouvert sans service : `Connection refused` (le paquet arrive) ; port non listé : `timed out` (le paquet est jeté) |
+| Le pare-feu ne coupe pas la production | appliqué sur la production : SSH sur le port non standard et `/api/health` en HTTPS répondent (`200`), les ports 22 et 8080 sont filtrés |
 | Le state n'est pas dans Git | état distant sur Terraform Cloud, deux workspaces (production et test jetable) |
+| Le plan est rejoué en CI | lancement manuel sur `main` : `init`, `plan` et interprétation réussis, **aucun écart** entre le code et la production (jeton Hetzner de la CI en lecture seule) |
 
 ## Ce qui est en place
 
