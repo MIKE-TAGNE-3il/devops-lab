@@ -109,7 +109,7 @@ Le projet se réalise en 4 semaines séquentielles. Ne jamais sauter une phase.
 - Provisioning du VPS Hetzner via Terraform : serveur + Cloud Firewall (80, 443, SSH, ping), clé SSH lue (`data`) et non créée
 - Un code, deux workspaces Terraform Cloud (`devops-lab-prod` importé, `devops-lab-test` jetable), valeurs dans `terraform/envs/*.tfvars` ; exécution LOCALE, state distant
 - `terraform plan` en CI (lecture seule, jamais d'apply) sur les PR et chaque lundi (dérive) : `.github/workflows/terraform.yml`
-- Pièges : le serveur de prod s'appelle encore `devops-lab-test` (nom historique) ; `cx23` n'est plus disponible à fsn1 (région de la prod) donc le test est en nbg1 ; sous PowerShell 5.1, mettre `"-var-file=…"` entre guillemets
+- Pièges : le serveur de prod s'appelait `devops-lab-test` chez Hetzner (renommé `devops-lab-prod` par le code, sans coupure ; le nom d'hôte dans la VM reste inchangé) ; `cx23` n'est plus disponible à fsn1 (région de la prod) donc le test est en nbg1 ; sous PowerShell 5.1, mettre `"-var-file=…"` entre guillemets
 - **Critère de validation :** `terraform apply` crée un VPS fonctionnel, `terraform destroy` le supprime
 
 ## Conventions de code
