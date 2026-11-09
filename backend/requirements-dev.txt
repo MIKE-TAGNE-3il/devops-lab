@@ -3,4 +3,4 @@
 
 pytest==9.2.0   # tests
 httpx==0.28.1   # client HTTP requis par le TestClient de FastAPI
-ruff==0.17.3    # lint + format Python
+ruff==0.17.4    # lint + format Python
