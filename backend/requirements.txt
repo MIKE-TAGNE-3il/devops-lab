@@ -2,9 +2,9 @@
 # Versions épinglées (==) : build reproductible, même image aujourd'hui et dans 6 mois.
 # Les outils de test et de lint sont dans requirements-dev.txt.
 
-fastapi==0.162.0
+fastapi==0.162.5
 uvicorn==0.54.0            # serveur ASGI qui exécute FastAPI
-sqlalchemy==2.1.6          # ORM
+sqlalchemy==2.1.8          # ORM
 alembic==1.20.1            # migrations de schéma
-psycopg[binary]==3.3.6     # pilote PostgreSQL ; [binary] évite d'installer gcc dans l'image
-pydantic-settings==2.16.1  # lecture de la configuration depuis les variables d'environnement
+psycopg[binary]==3.3.9     # pilote PostgreSQL ; [binary] évite d'installer gcc dans l'image
+pydantic-settings==2.16.2  # lecture de la configuration depuis les variables d'environnement
